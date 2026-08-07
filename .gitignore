@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+.expo-shared/
+android/
+ios/
+dist/
+build/
+.env
+.DS_Store
+.claude*
