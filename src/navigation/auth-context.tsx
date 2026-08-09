@@ -1,9 +1,12 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 
 type AuthContextValue = {
+  session: Session | null;
   isSignedIn: boolean;
-  signIn: () => void;
-  signOut: () => void;
+  isLoading: boolean;
+  signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -17,15 +20,32 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setIsLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
-      isSignedIn,
-      signIn: () => setIsSignedIn(true),
-      signOut: () => setIsSignedIn(false),
+      session,
+      isSignedIn: session !== null,
+      isLoading,
+      signOut: async () => {
+        await supabase.auth.signOut();
+      },
     }),
-    [isSignedIn],
+    [session, isLoading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
