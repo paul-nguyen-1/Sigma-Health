@@ -3,6 +3,7 @@ module sigma-health-api
 go 1.25.7
 
 require (
+	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/gofiber/fiber/v2 v2.52.14
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
@@ -10,6 +11,7 @@ require (
 )
 
 require (
+	github.com/MicahParks/jwkset v0.11.1 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -28,4 +30,5 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )

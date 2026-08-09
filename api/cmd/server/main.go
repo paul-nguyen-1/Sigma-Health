@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gofiber/fiber/v2"
 
 	"sigma-health-api/internal/config"
@@ -21,10 +22,15 @@ func main() {
 	}
 	defer pool.Close()
 
+	kf, err := keyfunc.NewDefaultCtx(context.Background(), []string{cfg.SupabaseJWKSURL})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	app := fiber.New()
 
 	app.Get("/health", handlers.Health)
-	app.Get("/me", middleware.RequireAuth(cfg.SupabaseJWTSecret), handlers.Me)
+	app.Get("/me", middleware.RequireAuth(kf), handlers.Me)
 
 	log.Fatal(app.Listen(":" + cfg.Port))
 }

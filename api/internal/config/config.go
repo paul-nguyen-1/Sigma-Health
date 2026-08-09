@@ -3,16 +3,16 @@ package config
 import "os"
 
 type Config struct {
-	Port              string
-	DatabaseURL       string
-	SupabaseJWTSecret string
+	Port            string
+	DatabaseURL     string
+	SupabaseJWKSURL string
 }
 
 func Load() Config {
 	return Config{
-		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		SupabaseJWTSecret: os.Getenv("SUPABASE_JWT_SECRET"),
+		Port:            getEnv("PORT", "8080"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		SupabaseJWKSURL: os.Getenv("SUPABASE_JWKS_URL"),
 	}
 }
 
