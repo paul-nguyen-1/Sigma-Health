@@ -16,7 +16,11 @@ import (
 func main() {
 	cfg := config.Load()
 
-	pool, err := db.NewPool(context.Background(), cfg.DatabaseURL)
+	if cfg.PhoneHashPepper == "" {
+		log.Fatal("PHONE_HASH_PEPPER must be set — the moderation-ban trigger depends on it")
+	}
+
+	pool, err := db.NewPool(context.Background(), cfg.DatabaseURL, cfg.PhoneHashPepper)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -30,7 +34,7 @@ func main() {
 	app := fiber.New()
 
 	app.Get("/health", handlers.Health)
-	app.Get("/me", middleware.RequireAuth(kf), handlers.Me)
+	app.Get("/me", middleware.RequireAuth(kf), handlers.Me(pool))
 
 	log.Fatal(app.Listen(":" + cfg.Port))
 }

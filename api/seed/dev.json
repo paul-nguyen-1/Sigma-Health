@@ -1,0 +1,8 @@
+{
+  "gyms": [
+    { "sport": "lifting", "name": "Example Gym (dev seed — replace before pilot)", "lat": 37.7749, "lng": -122.4194, "address": "Placeholder, San Francisco, CA" }
+  ],
+  "parks": [
+    { "sport": "running", "name": "Example Park (dev seed — replace before pilot)", "lat": 37.7694, "lng": -122.4862 }
+  ]
+}
