@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Sigma Health",
-    "slug": "sigma-health",
+    "slug": "sigma",
     "version": "1.0.0",
     "platforms": [
       "ios",
@@ -10,6 +10,12 @@
     ],
     "plugins": [
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7fee1676-b449-45e3-ba80-60d5fb29bc1a"
+      }
+    },
+    "owner": "paulnguyens-team"
   }
 }
