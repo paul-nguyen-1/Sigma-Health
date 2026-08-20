@@ -1,13 +1,13 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { HomeScreen } from '../screens/HomeScreen';
-import { WorkoutsScreen } from '../screens/WorkoutsScreen';
+import { LogScreen } from '../screens/LogScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { theme } from '../theme';
 
 export type AppTabParamList = {
   Home: undefined;
-  Workouts: undefined;
+  Log: undefined;
   Profile: undefined;
 };
 
@@ -23,7 +23,7 @@ export function AppTabs() {
       }}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Workouts" component={WorkoutsScreen} />
+      <Tab.Screen name="Log" component={LogScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

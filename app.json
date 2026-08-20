@@ -9,13 +9,28 @@
       "web"
     ],
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Sigma Health uses your photos to set a profile picture."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Sigma Health uses your location to submit a new gym or park at your current spot."
+        }
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "7fee1676-b449-45e3-ba80-60d5fb29bc1a"
       }
     },
-    "owner": "paulnguyens-team"
+    "owner": "paulnguyens-team",
+    "ios": {
+      "bundleIdentifier": "com.paul.nguyen.sigma"
+    }
   }
 }
