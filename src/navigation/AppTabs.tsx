@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -6,6 +6,7 @@ import { LogStack } from './LogStack';
 import type { LogStackParamList } from './LogStack';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { theme } from '../theme';
+import { registerForPushNotifications } from '../lib/pushNotifications';
 
 export type AppTabParamList = {
   Home: undefined;
@@ -16,6 +17,13 @@ export type AppTabParamList = {
 const Tab = createBottomTabNavigator<AppTabParamList>();
 
 export function AppTabs() {
+  // Once per app session, once the user has actually reached the main
+  // app (past onboarding/ban checks) -- registering earlier would mean
+  // asking for a permission before there's any context for why.
+  useEffect(() => {
+    registerForPushNotifications();
+  }, []);
+
   return (
     <Tab.Navigator
       screenOptions={{

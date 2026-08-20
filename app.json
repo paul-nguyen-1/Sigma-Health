@@ -22,7 +22,8 @@
           "locationWhenInUsePermission": "Sigma Health uses your location to submit a new gym or park at your current spot."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-notifications"
     ],
     "extra": {
       "eas": {
