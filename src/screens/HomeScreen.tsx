@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -28,83 +29,96 @@ export function HomeScreen() {
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    supabase.auth
-      .getUser()
-      .then(async ({ data: { user } }) => {
-        setIsLoading(true);
-        setLoadError(null);
-        if (!user) return;
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
 
-        const [profileRes, checkInRes, prsRes, runsRes] = await Promise.all([
-          supabase.from('profiles').select('home_gym_id, home_park_id').eq('id', user.id).maybeSingle(),
-          supabase
-            .from('check_ins')
-            .select('expires_at')
-            .eq('user_id', user.id)
-            .gt('expires_at', new Date().toISOString())
-            .order('checked_in_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase
-            .from('personal_records')
-            .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(RECENT_LIMIT),
-          supabase
-            .from('runs')
-            .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(RECENT_LIMIT),
-        ]);
+      supabase.auth
+        .getUser()
+        .then(async ({ data: { user } }) => {
+          if (cancelled) return;
+          setLoadError(null);
+          if (!user) {
+            setIsLoading(false);
+            return;
+          }
 
-        const firstError = profileRes.error ?? checkInRes.error ?? prsRes.error ?? runsRes.error;
-        if (firstError) {
-          setLoadError(firstError.message);
+          const [profileRes, checkInRes, prsRes, runsRes] = await Promise.all([
+            supabase.from('profiles').select('home_gym_id, home_park_id').eq('id', user.id).maybeSingle(),
+            supabase
+              .from('check_ins')
+              .select('expires_at')
+              .eq('user_id', user.id)
+              .gt('expires_at', new Date().toISOString())
+              .order('checked_in_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from('personal_records')
+              .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(RECENT_LIMIT),
+            supabase
+              .from('runs')
+              .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(RECENT_LIMIT),
+          ]);
+          if (cancelled) return;
+
+          const firstError = profileRes.error ?? checkInRes.error ?? prsRes.error ?? runsRes.error;
+          if (firstError) {
+            setLoadError(firstError.message);
+            setIsLoading(false);
+            return;
+          }
+
+          if (profileRes.data?.home_gym_id) {
+            setHomeLocation({ type: 'gym', id: profileRes.data.home_gym_id });
+          } else if (profileRes.data?.home_park_id) {
+            setHomeLocation({ type: 'park', id: profileRes.data.home_park_id });
+          }
+
+          setCheckInExpiresAt(checkInRes.data?.expires_at ?? null);
+
+          setPrHistory(
+            (prsRes.data ?? []).map((row) => ({
+              id: row.id,
+              userId: row.user_id,
+              gymId: row.gym_id,
+              liftName: row.lift_name,
+              weight: row.weight,
+              reps: row.reps,
+              calculated1rm: row.calculated_1rm,
+              createdAt: row.created_at,
+            })),
+          );
+          setRunHistory(
+            (runsRes.data ?? []).map((row) => ({
+              id: row.id,
+              userId: row.user_id,
+              parkId: row.park_id,
+              distanceKm: row.distance_km,
+              durationSeconds: row.duration_seconds,
+              paceSecondsPerKm: row.pace_seconds_per_km,
+              createdAt: row.created_at,
+            })),
+          );
           setIsLoading(false);
-          return;
-        }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setLoadError(err instanceof Error ? err.message : 'Failed to load your home screen');
+          setIsLoading(false);
+        });
 
-        if (profileRes.data?.home_gym_id) {
-          setHomeLocation({ type: 'gym', id: profileRes.data.home_gym_id });
-        } else if (profileRes.data?.home_park_id) {
-          setHomeLocation({ type: 'park', id: profileRes.data.home_park_id });
-        }
-
-        setCheckInExpiresAt(checkInRes.data?.expires_at ?? null);
-
-        setPrHistory(
-          (prsRes.data ?? []).map((row) => ({
-            id: row.id,
-            userId: row.user_id,
-            gymId: row.gym_id,
-            liftName: row.lift_name,
-            weight: row.weight,
-            reps: row.reps,
-            calculated1rm: row.calculated_1rm,
-            createdAt: row.created_at,
-          })),
-        );
-        setRunHistory(
-          (runsRes.data ?? []).map((row) => ({
-            id: row.id,
-            userId: row.user_id,
-            parkId: row.park_id,
-            distanceKm: row.distance_km,
-            durationSeconds: row.duration_seconds,
-            paceSecondsPerKm: row.pace_seconds_per_km,
-            createdAt: row.created_at,
-          })),
-        );
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : 'Failed to load your home screen');
-        setIsLoading(false);
-      });
-  }, [retryCount]);
+      return () => {
+        cancelled = true;
+      };
+    }, [retryCount]),
+  );
 
   async function handleCheckIn() {
     if (!homeLocation) return;

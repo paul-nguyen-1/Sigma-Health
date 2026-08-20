@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -27,95 +28,107 @@ export function ProfileScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
-  useEffect(() => {
-    async function load() {
-      setIsLoading(true);
-      setLoadError(null);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+      async function load() {
+        setLoadError(null);
 
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('display_name, bio, avatar_url, home_gym_id, home_park_id')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (profileError) throw new Error(profileError.message);
-
-      if (profile) {
-        setDisplayName(profile.display_name);
-        setBio(profile.bio);
-        setAvatarUrl(profile.avatar_url);
-
-        if (profile.home_gym_id) {
-          const { data: gym, error: gymError } = await supabase
-            .from('gyms')
-            .select('name')
-            .eq('id', profile.home_gym_id)
-            .maybeSingle();
-          if (gymError) throw new Error(gymError.message);
-          setHomeLocationName(gym?.name ?? null);
-        } else if (profile.home_park_id) {
-          const { data: park, error: parkError } = await supabase
-            .from('parks')
-            .select('name')
-            .eq('id', profile.home_park_id)
-            .maybeSingle();
-          if (parkError) throw new Error(parkError.message);
-          setHomeLocationName(park?.name ?? null);
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user || cancelled) {
+          if (!cancelled) setIsLoading(false);
+          return;
         }
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('display_name, bio, avatar_url, home_gym_id, home_park_id')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (profileError) throw new Error(profileError.message);
+
+        if (profile) {
+          setDisplayName(profile.display_name);
+          setBio(profile.bio);
+          setAvatarUrl(profile.avatar_url);
+
+          if (profile.home_gym_id) {
+            const { data: gym, error: gymError } = await supabase
+              .from('gyms')
+              .select('name')
+              .eq('id', profile.home_gym_id)
+              .maybeSingle();
+            if (gymError) throw new Error(gymError.message);
+            setHomeLocationName(gym?.name ?? null);
+          } else if (profile.home_park_id) {
+            const { data: park, error: parkError } = await supabase
+              .from('parks')
+              .select('name')
+              .eq('id', profile.home_park_id)
+              .maybeSingle();
+            if (parkError) throw new Error(parkError.message);
+            setHomeLocationName(park?.name ?? null);
+          }
+        }
+
+        const [prRes, runRes] = await Promise.all([
+          supabase
+            .from('personal_records')
+            .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(10),
+          supabase
+            .from('runs')
+            .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(10),
+        ]);
+        if (prRes.error) throw new Error(prRes.error.message);
+        if (runRes.error) throw new Error(runRes.error.message);
+        if (cancelled) return;
+
+        setPrHistory(
+          (prRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            gymId: row.gym_id,
+            liftName: row.lift_name,
+            weight: row.weight,
+            reps: row.reps,
+            calculated1rm: row.calculated_1rm,
+            createdAt: row.created_at,
+          })),
+        );
+        setRunHistory(
+          (runRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            parkId: row.park_id,
+            distanceKm: row.distance_km,
+            durationSeconds: row.duration_seconds,
+            paceSecondsPerKm: row.pace_seconds_per_km,
+            createdAt: row.created_at,
+          })),
+        );
+
+        setIsLoading(false);
       }
+      load().catch((err) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : 'Failed to load your profile');
+        setIsLoading(false);
+      });
 
-      const [prRes, runRes] = await Promise.all([
-        supabase
-          .from('personal_records')
-          .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10),
-        supabase
-          .from('runs')
-          .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10),
-      ]);
-      if (prRes.error) throw new Error(prRes.error.message);
-      if (runRes.error) throw new Error(runRes.error.message);
-
-      setPrHistory(
-        (prRes.data ?? []).map((row) => ({
-          id: row.id,
-          userId: row.user_id,
-          gymId: row.gym_id,
-          liftName: row.lift_name,
-          weight: row.weight,
-          reps: row.reps,
-          calculated1rm: row.calculated_1rm,
-          createdAt: row.created_at,
-        })),
-      );
-      setRunHistory(
-        (runRes.data ?? []).map((row) => ({
-          id: row.id,
-          userId: row.user_id,
-          parkId: row.park_id,
-          distanceKm: row.distance_km,
-          durationSeconds: row.duration_seconds,
-          paceSecondsPerKm: row.pace_seconds_per_km,
-          createdAt: row.created_at,
-        })),
-      );
-
-      setIsLoading(false);
-    }
-    load().catch((err) => {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load your profile');
-      setIsLoading(false);
-    });
-  }, [retryCount]);
+      return () => {
+        cancelled = true;
+      };
+    }, [retryCount]),
+  );
 
   if (loadError) {
     return <ErrorState message={loadError} onRetry={() => setRetryCount((c) => c + 1)} />;
