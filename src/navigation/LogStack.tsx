@@ -5,15 +5,24 @@ import { WorkoutSessionScreen } from '../screens/WorkoutSessionScreen';
 import { PlanBrowseScreen } from '../screens/PlanBrowseScreen';
 import type { PlanSessionLiftTarget, PlanSessionRunTarget } from '../types/models';
 
-// planSession, when present, is how "today's session" on Home hands off
-// into these screens: which user_plan_sessions row to link back to
-// (completedAt/workoutId/runId) once the workout/run is actually saved,
-// plus the target to pre-fill the form with.
+// planSession/dailySession, when present, are how "today's session" and
+// the opt-in "session of the day" on Home hand off into these screens.
+// planSession links back to a user_plan_sessions row on Done
+// (completedAt/workoutId/runId); dailySession just tags the resulting
+// workout/run with daily_session_id at save time -- no separate
+// completion row to update, since "did I do it" is inferred from that
+// FK existing (see .claude.roadmap.phase2.md §8).
 export type LogStackParamList = {
-  LogList: { runPlanSession?: { userPlanSessionId: string; title: string; target: PlanSessionRunTarget } } | undefined;
+  LogList:
+    | {
+        runPlanSession?: { userPlanSessionId: string; title: string; target: PlanSessionRunTarget };
+        runDailySession?: { dailySessionId: string; title: string; target: PlanSessionRunTarget };
+      }
+    | undefined;
   WorkoutSession: {
     workoutId: string | null;
     planSession?: { userPlanSessionId: string; title: string; target: PlanSessionLiftTarget };
+    dailySession?: { dailySessionId: string; title: string; target: PlanSessionLiftTarget };
   };
   PlanBrowse: undefined;
 };

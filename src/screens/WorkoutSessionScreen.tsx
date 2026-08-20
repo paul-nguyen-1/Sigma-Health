@@ -131,8 +131,9 @@ function ExerciseProgress({ sets }: { sets: WorkoutSet[] }) {
 export function WorkoutSessionScreen({ route, navigation }: Props) {
   const { hasLifting, liftingSportId } = useUserSports();
   const planSession = route.params.planSession ?? null;
+  const dailySession = route.params.dailySession ?? null;
   const [workoutId, setWorkoutId] = useState<string | null>(route.params.workoutId);
-  const [title, setTitle] = useState(planSession?.title ?? '');
+  const [title, setTitle] = useState(planSession?.title ?? dailySession?.title ?? '');
   const [location, setLocation] = useState<LocationRef | null>(null);
   const [exercises, setExercises] = useState<WorkoutExercise[]>([]);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -287,10 +288,16 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
       return;
     }
     const finalTitle = title.trim() || 'Workout';
-    const initialExercises = normalizeExercises(planSession?.target.exercises ?? []);
+    const initialExercises = normalizeExercises(planSession?.target.exercises ?? dailySession?.target.exercises ?? []);
     const { data: inserted, error: insertError } = await supabase
       .from('workouts')
-      .insert({ user_id: user.id, gym_id: location.id, title: finalTitle, exercises: initialExercises })
+      .insert({
+        user_id: user.id,
+        gym_id: location.id,
+        title: finalTitle,
+        exercises: initialExercises,
+        daily_session_id: dailySession?.dailySessionId ?? null,
+      })
       .select('id')
       .single();
     if (insertError || !inserted) {

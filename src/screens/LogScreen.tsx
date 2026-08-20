@@ -37,10 +37,12 @@ export function LogScreen({ navigation, route }: Props) {
     retry: retrySports,
   } = useUserSports();
   const runPlanSession = route.params?.runPlanSession ?? null;
-  const [modeOverride, setModeOverride] = useState<Mode | null>(runPlanSession ? 'run' : null);
+  const runDailySession = route.params?.runDailySession ?? null;
+  const runHandoff = runPlanSession ?? runDailySession;
+  const [modeOverride, setModeOverride] = useState<Mode | null>(runHandoff ? 'run' : null);
   const mode: Mode | null = sportsLoading ? null : (modeOverride ?? (hasLifting ? 'lift' : 'run'));
 
-  const [distanceKm, setDistanceKm] = useState(runPlanSession ? String(runPlanSession.target.distanceKm) : '');
+  const [distanceKm, setDistanceKm] = useState(runHandoff ? String(runHandoff.target.distanceKm) : '');
   const [durationMinutes, setDurationMinutes] = useState('');
   const [location, setLocation] = useState<LocationRef | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -94,22 +96,22 @@ export function LogScreen({ navigation, route }: Props) {
   }
 
   // Handles arriving here (already mounted, tab navigators keep screens
-  // alive) with a new plan-session hand-off from Home -- the useState
-  // initializers above only cover the first mount. Deferred to a
-  // microtask so these setState calls aren't synchronous within the
+  // alive) with a new plan- or daily-session hand-off from Home -- the
+  // useState initializers above only cover the first mount. Deferred to
+  // a microtask so these setState calls aren't synchronous within the
   // effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
-    if (!runPlanSession) return;
+    if (!runHandoff) return;
     Promise.resolve().then(() => {
       setModeOverride('run');
-      setDistanceKm(String(runPlanSession.target.distanceKm));
+      setDistanceKm(String(runHandoff.target.distanceKm));
     });
-    // Only userPlanSessionId identifies a genuinely new hand-off --
-    // runPlanSession's object identity changes on every route.params
-    // read even when it's the same hand-off, which would re-run this
-    // every render if included directly.
+    // Only the id fields identify a genuinely new hand-off --
+    // runHandoff's object identity changes on every route.params read
+    // even when it's the same hand-off, which would re-run this every
+    // render if included directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runPlanSession?.userPlanSessionId]);
+  }, [runPlanSession?.userPlanSessionId, runDailySession?.dailySessionId]);
 
   // useFocusEffect: coming back from WorkoutSessionScreen after
   // starting/editing a session needs this list to refetch, same reason
@@ -169,7 +171,13 @@ export function LogScreen({ navigation, route }: Props) {
     }
     const { data: inserted, error: insertError } = await supabase
       .from('runs')
-      .insert({ user_id: user.id, park_id: location.id, distance_km: distanceNum, duration_seconds: Math.round(durationNum * 60) })
+      .insert({
+        user_id: user.id,
+        park_id: location.id,
+        distance_km: distanceNum,
+        duration_seconds: Math.round(durationNum * 60),
+        daily_session_id: runDailySession?.dailySessionId ?? null,
+      })
       .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
       .single();
     if (insertError || !inserted) {

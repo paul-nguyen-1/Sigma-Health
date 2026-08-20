@@ -1,20 +1,28 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorState } from '../components/ErrorState';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { ShareCard } from '../components/ShareCard';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mergeActivity } from '../lib/activity';
+import { calculateStreak, STREAK_MILESTONES } from '../lib/streak';
+import { useUserSports } from '../lib/useUserSports';
 import { isLiftTarget, summarizeWorkout } from '../types/models';
 import type { PlanSessionTarget, Run, Workout } from '../types/models';
 import type { AppTabParamList } from '../navigation/AppTabs';
 
 const RECENT_LIMIT = 3;
+const STREAK_LOOKBACK_DAYS = 60;
+const MILESTONE_STORAGE_KEY = 'streakMilestoneShown';
 
 type Filter = 'all' | 'lift' | 'run';
 type TodaysSession = {
@@ -24,6 +32,8 @@ type TodaysSession = {
   completedAt: string | null;
 };
 type PlanCardState = 'no-plan' | 'rest-day' | 'session' | null;
+type DailySessionCard = { dailySessionId: string; title: string; target: PlanSessionTarget };
+type MilestoneShareData = { streak: number };
 
 // Check-in itself only happens from the Log tab (starting a workout or
 // logging a run) so it can be GPS-verified against the exact location
@@ -35,14 +45,20 @@ type PlanCardState = 'no-plan' | 'rest-day' | 'session' | null;
 // .claude.roadmap.phase2.md Status).
 export function HomeScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
+  const { liftingSportId, runningSportId } = useUserSports();
   const [planCardState, setPlanCardState] = useState<PlanCardState>(null);
   const [todaysSession, setTodaysSession] = useState<TodaysSession | null>(null);
+  const [dailySessions, setDailySessions] = useState<DailySessionCard[]>([]);
+  const [streak, setStreak] = useState(0);
+  const [milestoneShareData, setMilestoneShareData] = useState<MilestoneShareData | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runHistory, setRunHistory] = useState<Run[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const shareCardRef = useRef<View>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -58,7 +74,11 @@ export function HomeScreen() {
             return;
           }
 
-          const [workoutsRes, runsRes, planRes] = await Promise.all([
+          const today = new Date().toISOString().slice(0, 10);
+          const streakCutoff = new Date(Date.now() - STREAK_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+          const dailySessionSportIds = [liftingSportId, runningSportId].filter((id): id is string => !!id);
+
+          const [workoutsRes, runsRes, planRes, checkInsRes, completedSessionsRes, dailySessionsRes] = await Promise.all([
             supabase
               .from('workouts')
               .select('id, user_id, gym_id, title, exercises, started_at, updated_at')
@@ -78,21 +98,50 @@ export function HomeScreen() {
               .order('started_at', { ascending: false })
               .limit(1)
               .maybeSingle(),
+            supabase.from('check_ins').select('checked_in_at').eq('user_id', user.id).gte('checked_in_at', streakCutoff),
+            supabase.from('user_plan_sessions').select('completed_at').not('completed_at', 'is', null).gte('completed_at', streakCutoff),
+            dailySessionSportIds.length > 0
+              ? supabase.from('daily_sessions').select('id, title, target').eq('date', today).in('sport_id', dailySessionSportIds)
+              : Promise.resolve({ data: [], error: null }),
           ]);
           if (cancelled) return;
 
-          const firstError = workoutsRes.error ?? runsRes.error ?? planRes.error;
+          const firstError =
+            workoutsRes.error ?? runsRes.error ?? planRes.error ?? checkInsRes.error ?? completedSessionsRes.error ?? dailySessionsRes.error;
           if (firstError) {
             setLoadError(firstError.message);
             setIsLoading(false);
             return;
           }
 
+          const streakDates = [
+            ...(checkInsRes.data ?? []).map((row) => row.checked_in_at),
+            ...(completedSessionsRes.data ?? []).map((row) => row.completed_at as string),
+          ];
+          const currentStreak = calculateStreak(streakDates);
+          setStreak(currentStreak);
+
+          if (STREAK_MILESTONES.includes(currentStreak)) {
+            const shownRaw = await AsyncStorage.getItem(MILESTONE_STORAGE_KEY);
+            const alreadyShown = shownRaw ? Number(shownRaw) : 0;
+            if (currentStreak > alreadyShown) {
+              setMilestoneShareData({ streak: currentStreak });
+              await AsyncStorage.setItem(MILESTONE_STORAGE_KEY, String(currentStreak));
+            }
+          }
+
+          setDailySessions(
+            (dailySessionsRes.data ?? []).map((row) => ({
+              dailySessionId: row.id,
+              title: row.title,
+              target: row.target as PlanSessionTarget,
+            })),
+          );
+
           if (!planRes.data) {
             setPlanCardState('no-plan');
             setTodaysSession(null);
           } else {
-            const today = new Date().toISOString().slice(0, 10);
             const { data: session, error: sessionError } = await supabase
               .from('user_plan_sessions')
               .select('id, completed_at, plan_sessions(title, target)')
@@ -157,27 +206,40 @@ export function HomeScreen() {
       // force this callback to re-run when the ErrorState Retry button
       // bumps it, which is exactly what the dependency array is for.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [retryCount]),
+    }, [retryCount, liftingSportId, runningSportId]),
   );
+
+  function navigateToSession(target: PlanSessionTarget, hand: { userPlanSessionId: string; title: string } | { dailySessionId: string; title: string }) {
+    if (isLiftTarget(target)) {
+      const planSession = 'userPlanSessionId' in hand ? { ...hand, target } : undefined;
+      const dailySession = 'dailySessionId' in hand ? { ...hand, target } : undefined;
+      navigation.navigate('Log', { screen: 'WorkoutSession', params: { workoutId: null, planSession, dailySession } });
+    } else {
+      const runPlanSession = 'userPlanSessionId' in hand ? { ...hand, target } : undefined;
+      const runDailySession = 'dailySessionId' in hand ? { ...hand, target } : undefined;
+      navigation.navigate('Log', { screen: 'LogList', params: { runPlanSession, runDailySession } });
+    }
+  }
 
   function handleStartTodaysSession() {
     if (!todaysSession) return;
-    if (isLiftTarget(todaysSession.target)) {
-      navigation.navigate('Log', {
-        screen: 'WorkoutSession',
-        params: {
-          workoutId: null,
-          planSession: { userPlanSessionId: todaysSession.userPlanSessionId, title: todaysSession.title, target: todaysSession.target },
-        },
-      });
-    } else {
-      navigation.navigate('Log', {
-        screen: 'LogList',
-        params: {
-          runPlanSession: { userPlanSessionId: todaysSession.userPlanSessionId, title: todaysSession.title, target: todaysSession.target },
-        },
-      });
+    navigateToSession(todaysSession.target, { userPlanSessionId: todaysSession.userPlanSessionId, title: todaysSession.title });
+  }
+
+  function handleStartDailySession(session: DailySessionCard) {
+    navigateToSession(session.target, { dailySessionId: session.dailySessionId, title: session.title });
+  }
+
+  async function handleShareMilestone() {
+    setIsSharing(true);
+    try {
+      const uri = await captureRef(shareCardRef, { format: 'png', quality: 0.9 });
+      await Sharing.shareAsync(uri, { mimeType: 'image/png' });
+    } catch {
+      // Sharing is a nice-to-have -- a failed capture/share isn't worth
+      // surfacing as a blocking error.
     }
+    setIsSharing(false);
   }
 
   if (loadError) {
@@ -194,8 +256,31 @@ export function HomeScreen() {
   return (
     <ScreenContainer>
       <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Home</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Home</Text>
+          {streak > 0 ? <Text style={styles.streakBadge}>🔥 {streak}</Text> : null}
+        </View>
         <View style={styles.spacer} />
+
+        {milestoneShareData ? (
+          <>
+            <Card>
+              <Text style={styles.planCardTitle}>{milestoneShareData.streak}-day streak!</Text>
+              <View style={styles.spacerSmall} />
+              <ShareCard
+                ref={shareCardRef}
+                eyebrow="Streak milestone"
+                headline={`${milestoneShareData.streak} days`}
+                detail="Consecutive days checked in or trained"
+              />
+              <View style={styles.spacerSmall} />
+              <Button label={isSharing ? 'Sharing…' : 'Share'} onPress={handleShareMilestone} disabled={isSharing} />
+              <View style={styles.spacerSmall} />
+              <Button label="Dismiss" variant="secondary" onPress={() => setMilestoneShareData(null)} />
+            </Card>
+            <View style={styles.spacer} />
+          </>
+        ) : null}
 
         {planCardState === 'no-plan' ? (
           <Card>
@@ -223,6 +308,21 @@ export function HomeScreen() {
             )}
           </Card>
         ) : null}
+
+        {dailySessions.map((session) => (
+          <React.Fragment key={session.dailySessionId}>
+            <View style={styles.spacerSmall} />
+            <Card>
+              <Text style={styles.dailySessionEyebrow}>Session of the day</Text>
+              <Text style={styles.planCardTitle}>{session.title}</Text>
+              <Text style={styles.planCardBody}>
+                {isLiftTarget(session.target) ? summarizeWorkout(session.target.exercises) : `${session.target.distanceKm} km`}
+              </Text>
+              <View style={styles.spacerSmall} />
+              <Button label="Start" variant="secondary" onPress={() => handleStartDailySession(session)} />
+            </Card>
+          </React.Fragment>
+        ))}
         <View style={styles.spacer} />
 
         <Text style={styles.sectionTitle}>Recent activity</Text>
@@ -254,15 +354,31 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   title: {
     fontSize: theme.typography.size.xxl,
     fontWeight: theme.typography.weight.bold,
+    color: theme.colors.text,
+  },
+  streakBadge: {
+    fontSize: theme.typography.size.lg,
+    fontWeight: theme.typography.weight.semibold,
     color: theme.colors.text,
   },
   sectionTitle: {
     fontSize: theme.typography.size.lg,
     fontWeight: theme.typography.weight.semibold,
     color: theme.colors.text,
+  },
+  dailySessionEyebrow: {
+    fontSize: theme.typography.size.xs,
+    fontWeight: theme.typography.weight.semibold,
+    color: theme.colors.primary,
+    textTransform: 'uppercase',
   },
   spacer: {
     height: theme.spacing.lg,
