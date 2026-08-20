@@ -32,6 +32,9 @@
     "owner": "paulnguyens-team",
     "ios": {
       "bundleIdentifier": "com.paul.nguyen.sigma"
+    },
+    "android": {
+      "package": "com.paul.nguyen.sigma"
     }
   }
 }
