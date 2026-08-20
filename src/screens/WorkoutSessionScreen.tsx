@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
@@ -15,13 +16,112 @@ import { supabase } from '../lib/supabase';
 import { useUserSports } from '../lib/useUserSports';
 import type { LogStackParamList } from '../navigation/LogStack';
 import { summarizeWorkout } from '../types/models';
-import type { PersonalRecord, WorkoutExercise } from '../types/models';
+import type { PersonalRecord, WorkoutExercise, WorkoutSet } from '../types/models';
 
 type Props = NativeStackScreenProps<LogStackParamList, 'WorkoutSession'>;
 type LocationRef = { id: string; name: string };
 type ShareData = { eyebrow: string; headline: string; detail: string };
 
 const CHECK_IN_DURATION_MS = 3 * 60 * 60 * 1000;
+
+// Sets logged before `completed` existed have no such key at all --
+// normalize once on load rather than defensively at every read site.
+function normalizeExercises(exercises: WorkoutExercise[]): WorkoutExercise[] {
+  return exercises.map((ex) => ({ ...ex, sets: ex.sets.map((s) => ({ ...s, completed: s.completed ?? false })) }));
+}
+
+type SetRowProps = {
+  set: WorkoutSet;
+  index: number;
+  isCurrent: boolean;
+  onToggleComplete: () => void;
+  onChangeField: (field: 'weight' | 'reps', value: string) => void;
+  onBlur: () => void;
+  onRemove: () => void;
+};
+
+// Two ways to complete a set, per design: tap the checkbox, or swipe the
+// row right (auto-triggers on release, then springs back -- a "do it and
+// snap back" gesture, not a persistent revealed button, since completing
+// is low-stakes and just as easy to undo the same way).
+function SetRow({ set, index, isCurrent, onToggleComplete, onChangeField, onBlur, onRemove }: SetRowProps) {
+  // useState (not useRef().current) to create this once -- accessing
+  // ref.current synchronously during render is flagged by
+  // react-hooks/refs; a lazy useState initializer avoids that while
+  // still giving a stable Animated.Value we never call setState on.
+  const [scale] = useState(() => new Animated.Value(1));
+
+  function handleToggle() {
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.82, duration: 70, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 4, tension: 60 }),
+    ]).start();
+    onToggleComplete();
+  }
+
+  return (
+    <Swipeable
+      renderLeftActions={() => (
+        <View style={[styles.swipeAction, set.completed && styles.swipeActionUndo]}>
+          <Text style={styles.swipeActionLabel}>{set.completed ? 'Undo' : '✓ Done'}</Text>
+        </View>
+      )}
+      leftThreshold={56}
+      onSwipeableOpen={(direction, swipeable) => {
+        if (direction === 'left') {
+          handleToggle();
+          swipeable.close();
+        }
+      }}
+    >
+      <View style={[styles.setRow, set.completed && styles.setRowCompleted, isCurrent && styles.setRowCurrent]}>
+        <Pressable onPress={handleToggle} hitSlop={10}>
+          <Animated.View style={[styles.checkbox, set.completed && styles.checkboxCompleted, { transform: [{ scale }] }]}>
+            {set.completed ? <Text style={styles.checkmark}>✓</Text> : <Text style={styles.setIndex}>{index + 1}</Text>}
+          </Animated.View>
+        </Pressable>
+        <View style={styles.setField}>
+          <TextField
+            label="Weight"
+            value={set.weight ? String(set.weight) : ''}
+            onChangeText={(text) => onChangeField('weight', text)}
+            onBlur={onBlur}
+            keyboardType="decimal-pad"
+          />
+        </View>
+        <View style={styles.setField}>
+          <TextField
+            label="Reps"
+            value={set.reps ? String(set.reps) : ''}
+            onChangeText={(text) => onChangeField('reps', text)}
+            onBlur={onBlur}
+            keyboardType="number-pad"
+          />
+        </View>
+        <Pressable onPress={onRemove} style={styles.removeSetButton}>
+          <Text style={styles.removeButtonLabel}>✕</Text>
+        </Pressable>
+      </View>
+    </Swipeable>
+  );
+}
+
+function ExerciseProgress({ sets }: { sets: WorkoutSet[] }) {
+  if (sets.length === 0) return null;
+  const completedCount = sets.filter((s) => s.completed).length;
+  return (
+    <View style={styles.progressRow}>
+      <View style={styles.progressDots}>
+        {sets.map((s, i) => (
+          <View key={i} style={[styles.progressDot, s.completed && styles.progressDotFilled]} />
+        ))}
+      </View>
+      <Text style={styles.progressText}>
+        {completedCount}/{sets.length} sets
+      </Text>
+    </View>
+  );
+}
 
 // A workout is one row (title + exercises JSONB), not one row per lift --
 // starting a new session ties it to a gym via CheckInLocationModal, which
@@ -30,8 +130,9 @@ const CHECK_IN_DURATION_MS = 3 * 60 * 60 * 1000;
 // typing doesn't fire a request per keystroke.
 export function WorkoutSessionScreen({ route, navigation }: Props) {
   const { hasLifting, liftingSportId } = useUserSports();
+  const planSession = route.params.planSession ?? null;
   const [workoutId, setWorkoutId] = useState<string | null>(route.params.workoutId);
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(planSession?.title ?? '');
   const [location, setLocation] = useState<LocationRef | null>(null);
   const [exercises, setExercises] = useState<WorkoutExercise[]>([]);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -90,7 +191,7 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
         return;
       }
       setTitle(data.title);
-      setExercises((data.exercises as WorkoutExercise[]) ?? []);
+      setExercises(normalizeExercises((data.exercises as WorkoutExercise[]) ?? []));
       if (data.gym_id) {
         const { data: gym } = await supabase.from('gyms').select('name').eq('id', data.gym_id).maybeSingle();
         if (!cancelled) setLocation({ id: data.gym_id, name: gym?.name ?? 'Unknown gym' });
@@ -133,7 +234,19 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
   }
 
   function handleAddSet(exerciseIndex: number) {
-    const next = exercises.map((ex, i) => (i === exerciseIndex ? { ...ex, sets: [...ex.sets, { weight: 0, reps: 0 }] } : ex));
+    const next = exercises.map((ex, i) =>
+      i === exerciseIndex ? { ...ex, sets: [...ex.sets, { weight: 0, reps: 0, completed: false }] } : ex,
+    );
+    setExercises(next);
+    saveExercises(next);
+  }
+
+  function handleToggleSetComplete(exerciseIndex: number, setIndex: number) {
+    const next = exercises.map((ex, i) =>
+      i === exerciseIndex
+        ? { ...ex, sets: ex.sets.map((s, si) => (si === setIndex ? { ...s, completed: !s.completed } : s)) }
+        : ex,
+    );
     setExercises(next);
     saveExercises(next);
   }
@@ -174,9 +287,10 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
       return;
     }
     const finalTitle = title.trim() || 'Workout';
+    const initialExercises = normalizeExercises(planSession?.target.exercises ?? []);
     const { data: inserted, error: insertError } = await supabase
       .from('workouts')
-      .insert({ user_id: user.id, gym_id: location.id, title: finalTitle, exercises: [] })
+      .insert({ user_id: user.id, gym_id: location.id, title: finalTitle, exercises: initialExercises })
       .select('id')
       .single();
     if (insertError || !inserted) {
@@ -191,11 +305,21 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
       .insert({ user_id: user.id, location_type: 'gym', location_id: location.id, expires_at: expiresAt });
 
     setTitle(finalTitle);
+    setExercises(initialExercises);
     setIsStarting(false);
     setWorkoutId(inserted.id);
   }
 
-  function handleDone() {
+  async function handleDone() {
+    // Linking back to the plan session it's proving happens once, on
+    // Done -- not at Start -- since "completed" should mean the workout
+    // was actually finished, not merely begun.
+    if (planSession && workoutId) {
+      await supabase
+        .from('user_plan_sessions')
+        .update({ completed_at: new Date().toISOString(), workout_id: workoutId })
+        .eq('id', planSession.userPlanSessionId);
+    }
     if (exercises.length > 0) {
       setShareData({ eyebrow: 'Workout logged', headline: title || 'Workout', detail: summarizeWorkout(exercises) });
       return;
@@ -291,15 +415,30 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
     );
   }
 
+  const totalSetCount = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+  const completedSetCount = exercises.reduce((sum, ex) => sum + ex.sets.filter((s) => s.completed).length, 0);
+
   return (
     <ScreenContainer>
       <ScrollView showsVerticalScrollIndicator={false}>
         <TextField label="Title" value={title} onChangeText={setTitle} onBlur={saveTitle} />
         {location ? <Text style={styles.locationText}>At {location.name}</Text> : null}
+
+        {totalSetCount > 0 ? (
+          <>
+            <View style={styles.sessionProgressTrack}>
+              <View style={[styles.sessionProgressFill, { width: `${(completedSetCount / totalSetCount) * 100}%` }]} />
+            </View>
+            <Text style={styles.sessionProgressText}>
+              {completedSetCount} of {totalSetCount} sets complete
+            </Text>
+          </>
+        ) : null}
         <View style={styles.spacer} />
 
         {exercises.map((exercise, exerciseIndex) => {
           const pr = personalRecords.get(exercise.name.trim().toLowerCase());
+          const nextIncompleteIndex = exercise.sets.findIndex((s) => !s.completed);
           return (
             <Card key={exerciseIndex} style={styles.exerciseCard}>
               <View style={styles.exerciseHeaderRow}>
@@ -321,31 +460,20 @@ export function WorkoutSessionScreen({ route, navigation }: Props) {
                   <Text style={styles.removeButtonLabel}>Remove</Text>
                 </Pressable>
               </View>
+              <ExerciseProgress sets={exercise.sets} />
+              <View style={styles.spacerSmall} />
 
               {exercise.sets.map((set, setIndex) => (
-                <View key={setIndex} style={styles.setRow}>
-                  <View style={styles.setField}>
-                    <TextField
-                      label="Weight"
-                      value={set.weight ? String(set.weight) : ''}
-                      onChangeText={(text) => handleSetFieldChange(exerciseIndex, setIndex, 'weight', text)}
-                      onBlur={handleBlurSaveExercises}
-                      keyboardType="decimal-pad"
-                    />
-                  </View>
-                  <View style={styles.setField}>
-                    <TextField
-                      label="Reps"
-                      value={set.reps ? String(set.reps) : ''}
-                      onChangeText={(text) => handleSetFieldChange(exerciseIndex, setIndex, 'reps', text)}
-                      onBlur={handleBlurSaveExercises}
-                      keyboardType="number-pad"
-                    />
-                  </View>
-                  <Pressable onPress={() => handleRemoveSet(exerciseIndex, setIndex)} style={styles.removeSetButton}>
-                    <Text style={styles.removeButtonLabel}>✕</Text>
-                  </Pressable>
-                </View>
+                <SetRow
+                  key={setIndex}
+                  set={set}
+                  index={setIndex}
+                  isCurrent={setIndex === nextIncompleteIndex}
+                  onToggleComplete={() => handleToggleSetComplete(exerciseIndex, setIndex)}
+                  onChangeField={(field, value) => handleSetFieldChange(exerciseIndex, setIndex, field, value)}
+                  onBlur={handleBlurSaveExercises}
+                  onRemove={() => handleRemoveSet(exerciseIndex, setIndex)}
+                />
               ))}
               <Button label="+ Add set" variant="secondary" onPress={() => handleAddSet(exerciseIndex)} />
             </Card>
@@ -417,6 +545,94 @@ const styles = StyleSheet.create({
   setRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 10,
+    paddingHorizontal: theme.spacing.xs,
+    borderLeftWidth: 3,
+    borderLeftColor: 'transparent',
+  },
+  setRowCompleted: {
+    backgroundColor: 'rgba(22, 163, 74, 0.08)',
+  },
+  setRowCurrent: {
+    borderLeftColor: theme.colors.primary,
+  },
+  checkbox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: theme.spacing.sm,
+  },
+  checkboxCompleted: {
+    backgroundColor: theme.colors.success,
+    borderColor: theme.colors.success,
+  },
+  checkmark: {
+    color: theme.colors.primaryText,
+    fontWeight: theme.typography.weight.bold,
+    fontSize: theme.typography.size.base,
+  },
+  setIndex: {
+    color: theme.colors.textMuted,
+    fontSize: theme.typography.size.sm,
+    fontWeight: theme.typography.weight.semibold,
+  },
+  swipeAction: {
+    backgroundColor: theme.colors.success,
+    justifyContent: 'center',
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: 10,
+    marginBottom: theme.spacing.md,
+  },
+  swipeActionUndo: {
+    backgroundColor: theme.colors.textMuted,
+  },
+  swipeActionLabel: {
+    color: theme.colors.primaryText,
+    fontWeight: theme.typography.weight.semibold,
+    fontSize: theme.typography.size.sm,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: theme.spacing.xs,
+  },
+  progressDots: {
+    flexDirection: 'row',
+  },
+  progressDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.border,
+    marginRight: 6,
+  },
+  progressDotFilled: {
+    backgroundColor: theme.colors.success,
+  },
+  progressText: {
+    fontSize: theme.typography.size.xs,
+    color: theme.colors.textMuted,
+  },
+  sessionProgressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.surface,
+    overflow: 'hidden',
+  },
+  sessionProgressFill: {
+    height: '100%',
+    backgroundColor: theme.colors.success,
+    borderRadius: 4,
+  },
+  sessionProgressText: {
+    fontSize: theme.typography.size.xs,
+    color: theme.colors.textMuted,
+    marginTop: theme.spacing.xs,
   },
   setField: {
     flex: 1,

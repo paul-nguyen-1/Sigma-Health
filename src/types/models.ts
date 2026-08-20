@@ -44,6 +44,9 @@ export interface CheckIn {
 export interface WorkoutSet {
   weight: number;
   reps: number;
+  // Older logged sets predate this field -- always read as `completed ??
+  // false`, never assume it's present.
+  completed: boolean;
 }
 
 export interface WorkoutExercise {
@@ -88,4 +91,22 @@ export interface Run {
   durationSeconds: number;
   paceSecondsPerKm: number;
   createdAt: string;
+}
+
+// target shape is sport-specific, reusing existing shapes (see migration
+// 0016) rather than a third format -- lifting reuses WorkoutExercise[],
+// running is a plain distance/pace target.
+export interface PlanSessionLiftTarget {
+  exercises: WorkoutExercise[];
+}
+
+export interface PlanSessionRunTarget {
+  distanceKm: number;
+  targetPaceSecPerKm: number | null;
+}
+
+export type PlanSessionTarget = PlanSessionLiftTarget | PlanSessionRunTarget;
+
+export function isLiftTarget(target: PlanSessionTarget): target is PlanSessionLiftTarget {
+  return 'exercises' in target;
 }

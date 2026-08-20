@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { captureRef } from 'react-native-view-shot';
@@ -27,7 +27,7 @@ type Props = NativeStackScreenProps<LogStackParamList, 'LogList'>;
 
 const CHECK_IN_DURATION_MS = 3 * 60 * 60 * 1000;
 
-export function LogScreen({ navigation }: Props) {
+export function LogScreen({ navigation, route }: Props) {
   const {
     isLoading: sportsLoading,
     error: sportsError,
@@ -36,10 +36,11 @@ export function LogScreen({ navigation }: Props) {
     runningSportId,
     retry: retrySports,
   } = useUserSports();
-  const [modeOverride, setModeOverride] = useState<Mode | null>(null);
+  const runPlanSession = route.params?.runPlanSession ?? null;
+  const [modeOverride, setModeOverride] = useState<Mode | null>(runPlanSession ? 'run' : null);
   const mode: Mode | null = sportsLoading ? null : (modeOverride ?? (hasLifting ? 'lift' : 'run'));
 
-  const [distanceKm, setDistanceKm] = useState('');
+  const [distanceKm, setDistanceKm] = useState(runPlanSession ? String(runPlanSession.target.distanceKm) : '');
   const [durationMinutes, setDurationMinutes] = useState('');
   const [location, setLocation] = useState<LocationRef | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -91,6 +92,24 @@ export function LogScreen({ navigation }: Props) {
       createdAt: row.created_at,
     }));
   }
+
+  // Handles arriving here (already mounted, tab navigators keep screens
+  // alive) with a new plan-session hand-off from Home -- the useState
+  // initializers above only cover the first mount. Deferred to a
+  // microtask so these setState calls aren't synchronous within the
+  // effect body (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    if (!runPlanSession) return;
+    Promise.resolve().then(() => {
+      setModeOverride('run');
+      setDistanceKm(String(runPlanSession.target.distanceKm));
+    });
+    // Only userPlanSessionId identifies a genuinely new hand-off --
+    // runPlanSession's object identity changes on every route.params
+    // read even when it's the same hand-off, which would re-run this
+    // every render if included directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runPlanSession?.userPlanSessionId]);
 
   // useFocusEffect: coming back from WorkoutSessionScreen after
   // starting/editing a session needs this list to refetch, same reason
@@ -164,6 +183,13 @@ export function LogScreen({ navigation }: Props) {
       .from('check_ins')
       .insert({ user_id: user.id, location_type: 'park', location_id: location.id, expires_at: expiresAt });
 
+    if (runPlanSession) {
+      await supabase
+        .from('user_plan_sessions')
+        .update({ completed_at: new Date().toISOString(), run_id: inserted.id })
+        .eq('id', runPlanSession.userPlanSessionId);
+    }
+
     setIsSubmitting(false);
     setDistanceKm('');
     setDurationMinutes('');
@@ -223,6 +249,8 @@ export function LogScreen({ navigation }: Props) {
           value={mode}
           onChange={setModeOverride}
         />
+        <View style={styles.spacer} />
+        <Button label="Browse plans" variant="secondary" onPress={() => navigation.navigate('PlanBrowse')} />
         <View style={styles.spacer} />
 
         {mode === 'lift' ? (

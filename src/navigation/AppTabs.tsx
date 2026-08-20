@@ -1,13 +1,15 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LogStack } from './LogStack';
+import type { LogStackParamList } from './LogStack';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { theme } from '../theme';
 
 export type AppTabParamList = {
   Home: undefined;
-  Log: undefined;
+  Log: NavigatorScreenParams<LogStackParamList> | undefined;
   Profile: undefined;
 };
 
