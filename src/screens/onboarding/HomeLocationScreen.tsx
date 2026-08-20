@@ -7,6 +7,7 @@ import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
 import { TextField } from '../../components/TextField';
 import { ErrorState } from '../../components/ErrorState';
+import { SegmentedControl } from '../../components/SegmentedControl';
 import { theme } from '../../theme';
 import { supabase } from '../../lib/supabase';
 import { useUserSports } from '../../lib/useUserSports';
@@ -133,20 +134,14 @@ export function HomeLocationScreen({ navigation }: Props) {
       <Text style={styles.title}>Pick your home spot</Text>
       <View style={styles.spacer} />
       {hasLifting && hasRunning ? (
-        <View style={styles.toggleRow}>
-          <Pressable
-            onPress={() => setLocationTypeOverride('gym')}
-            style={[styles.toggleOption, locationType === 'gym' && styles.toggleOptionSelected]}
-          >
-            <Text style={[styles.toggleLabel, locationType === 'gym' && styles.toggleLabelSelected]}>Gym</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setLocationTypeOverride('park')}
-            style={[styles.toggleOption, locationType === 'park' && styles.toggleOptionSelected]}
-          >
-            <Text style={[styles.toggleLabel, locationType === 'park' && styles.toggleLabelSelected]}>Park</Text>
-          </Pressable>
-        </View>
+        <SegmentedControl
+          options={[
+            { value: 'gym', label: 'Gym' },
+            { value: 'park', label: 'Park' },
+          ]}
+          value={locationType}
+          onChange={setLocationTypeOverride}
+        />
       ) : null}
       <View style={styles.spacer} />
 
@@ -206,30 +201,6 @@ const styles = StyleSheet.create({
   },
   spacerSmall: {
     height: theme.spacing.sm,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-  },
-  toggleOption: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 8,
-    paddingVertical: theme.spacing.sm,
-    alignItems: 'center',
-    marginRight: theme.spacing.sm,
-  },
-  toggleOptionSelected: {
-    borderColor: theme.colors.primary,
-    backgroundColor: theme.colors.surface,
-  },
-  toggleLabel: {
-    fontSize: theme.typography.size.base,
-    fontWeight: theme.typography.weight.semibold,
-    color: theme.colors.text,
-  },
-  toggleLabelSelected: {
-    color: theme.colors.primary,
   },
   results: {
     maxHeight: 280,

@@ -4,35 +4,30 @@ import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorState } from '../components/ErrorState';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
 import { formatPace } from '../lib/format';
-import { useUserSports } from '../lib/useUserSports';
+import { mergeActivity } from '../lib/activity';
 import { useAuth } from '../navigation/auth-context';
 import type { PersonalRecord, Run } from '../types/models';
 
+type Filter = 'all' | 'lift' | 'run';
+
 export function ProfileScreen() {
   const { signOut } = useAuth();
-  const {
-    isLoading: sportsLoading,
-    error: sportsError,
-    hasLifting,
-    hasRunning,
-    retry: retrySports,
-  } = useUserSports();
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [homeLocationName, setHomeLocationName] = useState<string | null>(null);
   const [prHistory, setPrHistory] = useState<PersonalRecord[]>([]);
   const [runHistory, setRunHistory] = useState<Run[]>([]);
+  const [filter, setFilter] = useState<Filter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (sportsLoading) return;
-
     async function load() {
       setIsLoading(true);
       setLoadError(null);
@@ -73,48 +68,46 @@ export function ProfileScreen() {
         }
       }
 
-      if (hasLifting) {
-        const { data, error: prError } = await supabase
+      const [prRes, runRes] = await Promise.all([
+        supabase
           .from('personal_records')
           .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
-          .limit(10);
-        if (prError) throw new Error(prError.message);
-        setPrHistory(
-          (data ?? []).map((row) => ({
-            id: row.id,
-            userId: row.user_id,
-            gymId: row.gym_id,
-            liftName: row.lift_name,
-            weight: row.weight,
-            reps: row.reps,
-            calculated1rm: row.calculated_1rm,
-            createdAt: row.created_at,
-          })),
-        );
-      }
-
-      if (hasRunning) {
-        const { data, error: runError } = await supabase
+          .limit(10),
+        supabase
           .from('runs')
           .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
-          .limit(10);
-        if (runError) throw new Error(runError.message);
-        setRunHistory(
-          (data ?? []).map((row) => ({
-            id: row.id,
-            userId: row.user_id,
-            parkId: row.park_id,
-            distanceKm: row.distance_km,
-            durationSeconds: row.duration_seconds,
-            paceSecondsPerKm: row.pace_seconds_per_km,
-            createdAt: row.created_at,
-          })),
-        );
-      }
+          .limit(10),
+      ]);
+      if (prRes.error) throw new Error(prRes.error.message);
+      if (runRes.error) throw new Error(runRes.error.message);
+
+      setPrHistory(
+        (prRes.data ?? []).map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          gymId: row.gym_id,
+          liftName: row.lift_name,
+          weight: row.weight,
+          reps: row.reps,
+          calculated1rm: row.calculated_1rm,
+          createdAt: row.created_at,
+        })),
+      );
+      setRunHistory(
+        (runRes.data ?? []).map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          parkId: row.park_id,
+          distanceKm: row.distance_km,
+          durationSeconds: row.duration_seconds,
+          paceSecondsPerKm: row.pace_seconds_per_km,
+          createdAt: row.created_at,
+        })),
+      );
 
       setIsLoading(false);
     }
@@ -122,11 +115,7 @@ export function ProfileScreen() {
       setLoadError(err instanceof Error ? err.message : 'Failed to load your profile');
       setIsLoading(false);
     });
-  }, [sportsLoading, hasLifting, hasRunning, retryCount]);
-
-  if (sportsError) {
-    return <ErrorState message={sportsError} onRetry={retrySports} />;
-  }
+  }, [retryCount]);
 
   if (loadError) {
     return <ErrorState message={loadError} onRetry={() => setRetryCount((c) => c + 1)} />;
@@ -150,44 +139,56 @@ export function ProfileScreen() {
         {homeLocationName ? <Text style={styles.homeLocation}>{homeLocationName}</Text> : null}
         <View style={styles.spacer} />
 
-        {hasLifting ? (
-          <>
-            <Text style={styles.sectionTitle}>PR history</Text>
-            <View style={styles.spacerSmall} />
-            {prHistory.length === 0 ? (
-              <Text style={styles.emptyBody}>No PRs logged yet.</Text>
-            ) : (
-              prHistory.map((pr) => (
-                <Card key={pr.id} style={styles.historyCard}>
-                  <Text style={styles.historyLabel}>{pr.liftName}</Text>
-                  <Text style={styles.historyDetail}>
-                    {pr.weight} x {pr.reps} · 1RM {Math.round(pr.calculated1rm)}
-                  </Text>
-                </Card>
-              ))
-            )}
-            <View style={styles.spacer} />
-          </>
-        ) : null}
+        <SegmentedControl
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'lift', label: 'Lift' },
+            { value: 'run', label: 'Run' },
+          ]}
+          value={filter}
+          onChange={setFilter}
+        />
+        <View style={styles.spacer} />
 
-        {hasRunning ? (
-          <>
-            <Text style={styles.sectionTitle}>Run history</Text>
-            <View style={styles.spacerSmall} />
-            {runHistory.length === 0 ? (
-              <Text style={styles.emptyBody}>No runs logged yet.</Text>
-            ) : (
-              runHistory.map((run) => (
-                <Card key={run.id} style={styles.historyCard}>
-                  <Text style={styles.historyLabel}>{run.distanceKm} km</Text>
-                  <Text style={styles.historyDetail}>{formatPace(run.paceSecondsPerKm)}</Text>
-                </Card>
-              ))
-            )}
-            <View style={styles.spacer} />
-          </>
-        ) : null}
+        {filter === 'all' &&
+          (mergeActivity(prHistory, runHistory).length === 0 ? (
+            <Text style={styles.emptyBody}>Nothing logged yet.</Text>
+          ) : (
+            mergeActivity(prHistory, runHistory).map((item) => (
+              <Card key={item.id} style={styles.historyCard}>
+                <Text style={styles.historyLabel}>{item.label}</Text>
+                <Text style={styles.historyDetail}>{item.detail}</Text>
+              </Card>
+            ))
+          ))}
 
+        {filter === 'lift' &&
+          (prHistory.length === 0 ? (
+            <Text style={styles.emptyBody}>No PRs logged yet.</Text>
+          ) : (
+            prHistory.map((pr) => (
+              <Card key={pr.id} style={styles.historyCard}>
+                <Text style={styles.historyLabel}>{pr.liftName}</Text>
+                <Text style={styles.historyDetail}>
+                  {pr.weight} x {pr.reps} · 1RM {Math.round(pr.calculated1rm)}
+                </Text>
+              </Card>
+            ))
+          ))}
+
+        {filter === 'run' &&
+          (runHistory.length === 0 ? (
+            <Text style={styles.emptyBody}>No runs logged yet.</Text>
+          ) : (
+            runHistory.map((run) => (
+              <Card key={run.id} style={styles.historyCard}>
+                <Text style={styles.historyLabel}>{run.distanceKm} km</Text>
+                <Text style={styles.historyDetail}>{formatPace(run.paceSecondsPerKm)}</Text>
+              </Card>
+            ))
+          ))}
+
+        <View style={styles.spacer} />
         <Button label="Sign Out" variant="secondary" onPress={signOut} />
       </ScrollView>
     </ScreenContainer>
@@ -198,11 +199,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: theme.typography.size.xxl,
     fontWeight: theme.typography.weight.bold,
-    color: theme.colors.text,
-  },
-  sectionTitle: {
-    fontSize: theme.typography.size.lg,
-    fontWeight: theme.typography.weight.semibold,
     color: theme.colors.text,
   },
   bio: {

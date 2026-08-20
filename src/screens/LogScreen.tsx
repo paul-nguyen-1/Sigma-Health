@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { TextField } from '../components/TextField';
 import { ErrorState } from '../components/ErrorState';
+import { ShareCard } from '../components/ShareCard';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
 import { formatPace } from '../lib/format';
@@ -12,13 +16,13 @@ import { useUserSports } from '../lib/useUserSports';
 import type { PersonalRecord, Run } from '../types/models';
 
 type Mode = 'lift' | 'run';
+type ShareData = { eyebrow: string; headline: string; detail: string };
 
 export function LogScreen() {
   const {
     isLoading: sportsLoading,
     error: sportsError,
     hasLifting,
-    hasRunning,
     retry: retrySports,
   } = useUserSports();
   const [modeOverride, setModeOverride] = useState<Mode | null>(null);
@@ -37,6 +41,9 @@ export function LogScreen() {
   const [error, setError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyRetryCount, setHistoryRetryCount] = useState(0);
+  const [shareData, setShareData] = useState<ShareData | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const shareCardRef = useRef<View>(null);
 
   async function fetchPrHistory(userId: string): Promise<PersonalRecord[]> {
     const { data, error: fetchError } = await supabase
@@ -108,20 +115,37 @@ export function LogScreen() {
       setIsSubmitting(false);
       return;
     }
-    const { error: insertError } = await supabase
+    const { data: inserted, error: insertError } = await supabase
       .from('personal_records')
-      .insert({ user_id: user.id, lift_name: liftName.trim(), weight: weightNum, reps: repsNum });
+      .insert({ user_id: user.id, lift_name: liftName.trim(), weight: weightNum, reps: repsNum })
+      .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
+      .single();
     setIsSubmitting(false);
-    if (insertError) {
-      setError(insertError.message);
+    if (insertError || !inserted) {
+      setError(insertError?.message ?? 'Could not log that lift.');
       return;
     }
     setLiftName('');
     setWeight('');
     setReps('');
-    fetchPrHistory(user.id)
-      .then(setPrHistory)
-      .catch(() => {});
+    setShareData({
+      eyebrow: 'New PR',
+      headline: inserted.lift_name,
+      detail: `${inserted.weight} x ${inserted.reps} · 1RM ${Math.round(inserted.calculated_1rm)}`,
+    });
+    setPrHistory((prev) => [
+      {
+        id: inserted.id,
+        userId: inserted.user_id,
+        gymId: inserted.gym_id,
+        liftName: inserted.lift_name,
+        weight: inserted.weight,
+        reps: inserted.reps,
+        calculated1rm: inserted.calculated_1rm,
+        createdAt: inserted.created_at,
+      },
+      ...prev,
+    ]);
   }
 
   async function handleLogRun() {
@@ -140,19 +164,47 @@ export function LogScreen() {
       setIsSubmitting(false);
       return;
     }
-    const { error: insertError } = await supabase
+    const { data: inserted, error: insertError } = await supabase
       .from('runs')
-      .insert({ user_id: user.id, distance_km: distanceNum, duration_seconds: Math.round(durationNum * 60) });
+      .insert({ user_id: user.id, distance_km: distanceNum, duration_seconds: Math.round(durationNum * 60) })
+      .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+      .single();
     setIsSubmitting(false);
-    if (insertError) {
-      setError(insertError.message);
+    if (insertError || !inserted) {
+      setError(insertError?.message ?? 'Could not log that run.');
       return;
     }
     setDistanceKm('');
     setDurationMinutes('');
-    fetchRunHistory(user.id)
-      .then(setRunHistory)
-      .catch(() => {});
+    setShareData({
+      eyebrow: 'Run logged',
+      headline: `${inserted.distance_km} km`,
+      detail: formatPace(inserted.pace_seconds_per_km),
+    });
+    setRunHistory((prev) => [
+      {
+        id: inserted.id,
+        userId: inserted.user_id,
+        parkId: inserted.park_id,
+        distanceKm: inserted.distance_km,
+        durationSeconds: inserted.duration_seconds,
+        paceSecondsPerKm: inserted.pace_seconds_per_km,
+        createdAt: inserted.created_at,
+      },
+      ...prev,
+    ]);
+  }
+
+  async function handleShare() {
+    setIsSharing(true);
+    try {
+      const uri = await captureRef(shareCardRef, { format: 'png', quality: 0.9 });
+      await Sharing.shareAsync(uri, { mimeType: 'image/png' });
+    } catch {
+      // Sharing is a nice-to-have on top of an already-saved log -- a
+      // failed capture/share isn't worth surfacing as a blocking error.
+    }
+    setIsSharing(false);
   }
 
   if (sportsError) {
@@ -172,25 +224,15 @@ export function LogScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Log</Text>
         <View style={styles.spacer} />
-        {hasLifting && hasRunning ? (
-          <>
-            <View style={styles.toggleRow}>
-              <Pressable
-                onPress={() => setModeOverride('lift')}
-                style={[styles.toggleOption, mode === 'lift' && styles.toggleOptionSelected]}
-              >
-                <Text style={[styles.toggleLabel, mode === 'lift' && styles.toggleLabelSelected]}>Lift</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setModeOverride('run')}
-                style={[styles.toggleOption, mode === 'run' && styles.toggleOptionSelected]}
-              >
-                <Text style={[styles.toggleLabel, mode === 'run' && styles.toggleLabelSelected]}>Run</Text>
-              </Pressable>
-            </View>
-            <View style={styles.spacer} />
-          </>
-        ) : null}
+        <SegmentedControl
+          options={[
+            { value: 'lift', label: 'Lift' },
+            { value: 'run', label: 'Run' },
+          ]}
+          value={mode}
+          onChange={setModeOverride}
+        />
+        <View style={styles.spacer} />
 
         {mode === 'lift' ? (
           <>
@@ -213,6 +255,17 @@ export function LogScreen() {
             <Button label={isSubmitting ? 'Saving…' : 'Log run'} onPress={handleLogRun} disabled={isSubmitting} />
           </>
         )}
+
+        {shareData ? (
+          <>
+            <View style={styles.spacer} />
+            <ShareCard ref={shareCardRef} eyebrow={shareData.eyebrow} headline={shareData.headline} detail={shareData.detail} />
+            <View style={styles.spacerSmall} />
+            <Button label={isSharing ? 'Sharing…' : 'Share'} onPress={handleShare} disabled={isSharing} />
+            <View style={styles.spacerSmall} />
+            <Button label="Dismiss" variant="secondary" onPress={() => setShareData(null)} />
+          </>
+        ) : null}
 
         <View style={styles.spacer} />
         <Text style={styles.sectionTitle}>History</Text>
@@ -256,30 +309,6 @@ const styles = StyleSheet.create({
   },
   spacerSmall: {
     height: theme.spacing.sm,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-  },
-  toggleOption: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 8,
-    paddingVertical: theme.spacing.sm,
-    alignItems: 'center',
-    marginRight: theme.spacing.sm,
-  },
-  toggleOptionSelected: {
-    borderColor: theme.colors.primary,
-    backgroundColor: theme.colors.surface,
-  },
-  toggleLabel: {
-    fontSize: theme.typography.size.base,
-    fontWeight: theme.typography.weight.semibold,
-    color: theme.colors.text,
-  },
-  toggleLabelSelected: {
-    color: theme.colors.primary,
   },
   historyCard: {
     marginBottom: theme.spacing.sm,

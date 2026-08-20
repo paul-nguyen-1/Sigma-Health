@@ -4,19 +4,24 @@ import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ErrorState } from '../components/ErrorState';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
-import { formatPace } from '../lib/format';
+import { mergeActivity } from '../lib/activity';
+import type { PersonalRecord, Run } from '../types/models';
 
 const CHECK_IN_DURATION_MS = 3 * 60 * 60 * 1000;
+const RECENT_LIMIT = 3;
 
 type HomeLocation = { type: 'gym' | 'park'; id: string } | null;
-type ActivityItem = { id: string; createdAt: string; label: string; detail: string };
+type Filter = 'all' | 'lift' | 'run';
 
 export function HomeScreen() {
   const [homeLocation, setHomeLocation] = useState<HomeLocation>(null);
   const [checkInExpiresAt, setCheckInExpiresAt] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [prHistory, setPrHistory] = useState<PersonalRecord[]>([]);
+  const [runHistory, setRunHistory] = useState<Run[]>([]);
+  const [filter, setFilter] = useState<Filter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -24,70 +29,81 @@ export function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      setIsLoading(true);
-      setLoadError(null);
-      if (!user) return;
+    supabase.auth
+      .getUser()
+      .then(async ({ data: { user } }) => {
+        setIsLoading(true);
+        setLoadError(null);
+        if (!user) return;
 
-      const [profileRes, checkInRes, prsRes, runsRes] = await Promise.all([
-        supabase.from('profiles').select('home_gym_id, home_park_id').eq('id', user.id).maybeSingle(),
-        supabase
-          .from('check_ins')
-          .select('expires_at')
-          .eq('user_id', user.id)
-          .gt('expires_at', new Date().toISOString())
-          .order('checked_in_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        supabase
-          .from('personal_records')
-          .select('id, lift_name, weight, reps, calculated_1rm, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(3),
-        supabase
-          .from('runs')
-          .select('id, distance_km, pace_seconds_per_km, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(3),
-      ]);
+        const [profileRes, checkInRes, prsRes, runsRes] = await Promise.all([
+          supabase.from('profiles').select('home_gym_id, home_park_id').eq('id', user.id).maybeSingle(),
+          supabase
+            .from('check_ins')
+            .select('expires_at')
+            .eq('user_id', user.id)
+            .gt('expires_at', new Date().toISOString())
+            .order('checked_in_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from('personal_records')
+            .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(RECENT_LIMIT),
+          supabase
+            .from('runs')
+            .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(RECENT_LIMIT),
+        ]);
 
-      const firstError = profileRes.error ?? checkInRes.error ?? prsRes.error ?? runsRes.error;
-      if (firstError) {
-        setLoadError(firstError.message);
+        const firstError = profileRes.error ?? checkInRes.error ?? prsRes.error ?? runsRes.error;
+        if (firstError) {
+          setLoadError(firstError.message);
+          setIsLoading(false);
+          return;
+        }
+
+        if (profileRes.data?.home_gym_id) {
+          setHomeLocation({ type: 'gym', id: profileRes.data.home_gym_id });
+        } else if (profileRes.data?.home_park_id) {
+          setHomeLocation({ type: 'park', id: profileRes.data.home_park_id });
+        }
+
+        setCheckInExpiresAt(checkInRes.data?.expires_at ?? null);
+
+        setPrHistory(
+          (prsRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            gymId: row.gym_id,
+            liftName: row.lift_name,
+            weight: row.weight,
+            reps: row.reps,
+            calculated1rm: row.calculated_1rm,
+            createdAt: row.created_at,
+          })),
+        );
+        setRunHistory(
+          (runsRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            parkId: row.park_id,
+            distanceKm: row.distance_km,
+            durationSeconds: row.duration_seconds,
+            paceSecondsPerKm: row.pace_seconds_per_km,
+            createdAt: row.created_at,
+          })),
+        );
         setIsLoading(false);
-        return;
-      }
-
-      if (profileRes.data?.home_gym_id) {
-        setHomeLocation({ type: 'gym', id: profileRes.data.home_gym_id });
-      } else if (profileRes.data?.home_park_id) {
-        setHomeLocation({ type: 'park', id: profileRes.data.home_park_id });
-      }
-
-      setCheckInExpiresAt(checkInRes.data?.expires_at ?? null);
-
-      const prItems: ActivityItem[] = (prsRes.data ?? []).map((row) => ({
-        id: `pr-${row.id}`,
-        createdAt: row.created_at,
-        label: row.lift_name,
-        detail: `${row.weight} x ${row.reps} · 1RM ${Math.round(row.calculated_1rm)}`,
-      }));
-      const runItems: ActivityItem[] = (runsRes.data ?? []).map((row) => ({
-        id: `run-${row.id}`,
-        createdAt: row.created_at,
-        label: `${row.distance_km} km run`,
-        detail: formatPace(row.pace_seconds_per_km),
-      }));
-
-      setActivity([...prItems, ...runItems].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 3));
-      setIsLoading(false);
-    })
-    .catch((err) => {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load your home screen');
-      setIsLoading(false);
-    });
+      })
+      .catch((err) => {
+        setLoadError(err instanceof Error ? err.message : 'Failed to load your home screen');
+        setIsLoading(false);
+      });
   }, [retryCount]);
 
   async function handleCheckIn() {
@@ -125,6 +141,8 @@ export function HomeScreen() {
   }
 
   const isCheckedIn = !!checkInExpiresAt;
+  const merged = mergeActivity(prHistory, runHistory);
+  const visibleActivity = filter === 'all' ? merged.slice(0, RECENT_LIMIT) : merged.filter((item) => item.kind === filter);
 
   return (
     <ScreenContainer>
@@ -156,10 +174,20 @@ export function HomeScreen() {
         <View style={styles.spacer} />
         <Text style={styles.sectionTitle}>Recent activity</Text>
         <View style={styles.spacerSmall} />
-        {activity.length === 0 ? (
+        <SegmentedControl
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'lift', label: 'Lift' },
+            { value: 'run', label: 'Run' },
+          ]}
+          value={filter}
+          onChange={setFilter}
+        />
+        <View style={styles.spacerSmall} />
+        {visibleActivity.length === 0 ? (
           <Text style={styles.emptyBody}>Nothing logged yet.</Text>
         ) : (
-          activity.map((item) => (
+          visibleActivity.map((item) => (
             <Card key={item.id} style={styles.activityCard}>
               <Text style={styles.activityLabel}>{item.label}</Text>
               <Text style={styles.activityDetail}>{item.detail}</Text>
