@@ -20,9 +20,9 @@ func TestUserDeleteCascades(t *testing.T) {
 	dana := createUser(t, pool, "Dana")
 
 	if _, err := pool.Exec(ctx,
-		"INSERT INTO personal_records (user_id, lift_name, weight, reps) VALUES ($1, 'squat', 135, 5)", dana,
+		"INSERT INTO workouts (user_id, title, exercises) VALUES ($1, 'Leg Day', '[]'::jsonb)", dana,
 	); err != nil {
-		t.Fatalf("insert personal_records: %v", err)
+		t.Fatalf("insert workouts: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
 		"INSERT INTO moderation_bans (user_id, reason, phone_number_hash, banned_at) VALUES ($1, 'test ban', 'abc123', now())", dana,

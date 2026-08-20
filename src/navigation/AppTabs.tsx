@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { HomeScreen } from '../screens/HomeScreen';
-import { LogScreen } from '../screens/LogScreen';
+import { LogStack } from './LogStack';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { theme } from '../theme';
 
@@ -23,7 +23,7 @@ export function AppTabs() {
       }}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Log" component={LogScreen} />
+      <Tab.Screen name="Log" component={LogStack} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

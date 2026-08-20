@@ -1,5 +1,6 @@
-import { formatPace } from './format';
-import type { PersonalRecord, Run } from '../types/models';
+import { formatPace, formatTimestamp } from './format';
+import { summarizeWorkout } from '../types/models';
+import type { Run, Workout } from '../types/models';
 
 export type ActivityItem = {
   id: string;
@@ -7,15 +8,17 @@ export type ActivityItem = {
   createdAt: string;
   label: string;
   detail: string;
+  timestamp: string;
 };
 
-export function prToActivityItem(pr: PersonalRecord): ActivityItem {
+export function workoutToActivityItem(workout: Workout): ActivityItem {
   return {
-    id: pr.id,
+    id: workout.id,
     kind: 'lift',
-    createdAt: pr.createdAt,
-    label: pr.liftName,
-    detail: `${pr.weight} x ${pr.reps} · 1RM ${Math.round(pr.calculated1rm)}`,
+    createdAt: workout.startedAt,
+    label: workout.title,
+    detail: summarizeWorkout(workout.exercises),
+    timestamp: formatTimestamp(workout.startedAt),
   };
 }
 
@@ -26,13 +29,14 @@ export function runToActivityItem(run: Run): ActivityItem {
     createdAt: run.createdAt,
     label: `${run.distanceKm} km`,
     detail: formatPace(run.paceSecondsPerKm),
+    timestamp: formatTimestamp(run.createdAt),
   };
 }
 
-// Merges lift + run history into one feed sorted newest-first -- the "All"
-// filter option wherever both are shown together (Home, Profile).
-export function mergeActivity(prs: PersonalRecord[], runs: Run[]): ActivityItem[] {
-  return [...prs.map(prToActivityItem), ...runs.map(runToActivityItem)].sort((a, b) =>
+// Merges workouts + run history into one feed sorted newest-first -- the
+// "All" filter option wherever both are shown together (Home, Profile).
+export function mergeActivity(workouts: Workout[], runs: Run[]): ActivityItem[] {
+  return [...workouts.map(workoutToActivityItem), ...runs.map(runToActivityItem)].sort((a, b) =>
     a.createdAt < b.createdAt ? 1 : -1,
   );
 }

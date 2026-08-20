@@ -1,0 +1,8 @@
+{
+  "gyms": [
+    { "sport": "lifting", "name": "Life Time Greenway", "lat": 29.7357, "lng": -95.4276, "address": "3131 Buffalo Speedway, Houston, TX 77098" }
+  ],
+  "parks": [
+    { "sport": "running", "name": "Memorial Park", "lat": 29.7633, "lng": -95.4380 }
+  ]
+}

@@ -6,25 +6,11 @@ import (
 	"testing"
 )
 
-func TestCalculated1RM(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	alice := createUser(t, pool, "Alice")
-
-	var oneRM float64
-	err := pool.QueryRow(ctx,
-		"INSERT INTO personal_records (user_id, lift_name, weight, reps) VALUES ($1, 'bench', 100, 5) RETURNING calculated_1rm",
-		alice,
-	).Scan(&oneRM)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	want := 100 * (1 + 5.0/30) // Epley formula
-	if math.Abs(oneRM-want) > 0.001 {
-		t.Errorf("calculated_1rm = %v, want %v", oneRM, want)
-	}
-}
+// 1RM is no longer a DB-generated column -- workouts (migration 0014)
+// replaced the one-row-per-lift personal_records model with one row per
+// session, so 1RM per set is computed client-side (Epley formula) from
+// the exercises JSONB instead of being stored. Nothing to test at the DB
+// layer for it anymore.
 
 func TestRunPaceAndDistanceBucket(t *testing.T) {
 	pool := testPool(t)

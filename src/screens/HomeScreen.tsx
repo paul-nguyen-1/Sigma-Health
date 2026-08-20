@@ -3,31 +3,27 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
-import { Button } from '../components/Button';
 import { ErrorState } from '../components/ErrorState';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mergeActivity } from '../lib/activity';
-import type { PersonalRecord, Run } from '../types/models';
+import type { Run, Workout } from '../types/models';
 
-const CHECK_IN_DURATION_MS = 3 * 60 * 60 * 1000;
 const RECENT_LIMIT = 3;
 
-type HomeLocation = { type: 'gym' | 'park'; id: string } | null;
 type Filter = 'all' | 'lift' | 'run';
 
+// Check-in itself only happens from the Log tab (starting a workout or
+// logging a run) so it can be GPS-verified against the exact location
+// you're about to log against -- Home has no check-in UI or status at all.
 export function HomeScreen() {
-  const [homeLocation, setHomeLocation] = useState<HomeLocation>(null);
-  const [checkInExpiresAt, setCheckInExpiresAt] = useState<string | null>(null);
-  const [prHistory, setPrHistory] = useState<PersonalRecord[]>([]);
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runHistory, setRunHistory] = useState<Run[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const [isCheckingIn, setIsCheckingIn] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -43,21 +39,12 @@ export function HomeScreen() {
             return;
           }
 
-          const [profileRes, checkInRes, prsRes, runsRes] = await Promise.all([
-            supabase.from('profiles').select('home_gym_id, home_park_id').eq('id', user.id).maybeSingle(),
+          const [workoutsRes, runsRes] = await Promise.all([
             supabase
-              .from('check_ins')
-              .select('expires_at')
+              .from('workouts')
+              .select('id, user_id, gym_id, title, exercises, started_at, updated_at')
               .eq('user_id', user.id)
-              .gt('expires_at', new Date().toISOString())
-              .order('checked_in_at', { ascending: false })
-              .limit(1)
-              .maybeSingle(),
-            supabase
-              .from('personal_records')
-              .select('id, user_id, gym_id, lift_name, weight, reps, calculated_1rm, created_at')
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false })
+              .order('started_at', { ascending: false })
               .limit(RECENT_LIMIT),
             supabase
               .from('runs')
@@ -68,31 +55,22 @@ export function HomeScreen() {
           ]);
           if (cancelled) return;
 
-          const firstError = profileRes.error ?? checkInRes.error ?? prsRes.error ?? runsRes.error;
+          const firstError = workoutsRes.error ?? runsRes.error;
           if (firstError) {
             setLoadError(firstError.message);
             setIsLoading(false);
             return;
           }
 
-          if (profileRes.data?.home_gym_id) {
-            setHomeLocation({ type: 'gym', id: profileRes.data.home_gym_id });
-          } else if (profileRes.data?.home_park_id) {
-            setHomeLocation({ type: 'park', id: profileRes.data.home_park_id });
-          }
-
-          setCheckInExpiresAt(checkInRes.data?.expires_at ?? null);
-
-          setPrHistory(
-            (prsRes.data ?? []).map((row) => ({
+          setWorkouts(
+            (workoutsRes.data ?? []).map((row) => ({
               id: row.id,
               userId: row.user_id,
               gymId: row.gym_id,
-              liftName: row.lift_name,
-              weight: row.weight,
-              reps: row.reps,
-              calculated1rm: row.calculated_1rm,
-              createdAt: row.created_at,
+              title: row.title,
+              exercises: row.exercises ?? [],
+              startedAt: row.started_at,
+              updatedAt: row.updated_at,
             })),
           );
           setRunHistory(
@@ -117,34 +95,12 @@ export function HomeScreen() {
       return () => {
         cancelled = true;
       };
+      // retryCount isn't read in the body -- it's a dependency purely to
+      // force this callback to re-run when the ErrorState Retry button
+      // bumps it, which is exactly what the dependency array is for.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [retryCount]),
   );
-
-  async function handleCheckIn() {
-    if (!homeLocation) return;
-    setError(null);
-    setIsCheckingIn(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setIsCheckingIn(false);
-      return;
-    }
-    const expiresAt = new Date(Date.now() + CHECK_IN_DURATION_MS).toISOString();
-    const { error: insertError } = await supabase.from('check_ins').insert({
-      user_id: user.id,
-      location_type: homeLocation.type,
-      location_id: homeLocation.id,
-      expires_at: expiresAt,
-    });
-    setIsCheckingIn(false);
-    if (insertError) {
-      setError(insertError.message);
-      return;
-    }
-    setCheckInExpiresAt(expiresAt);
-  }
 
   if (loadError) {
     return <ErrorState message={loadError} onRetry={() => setRetryCount((c) => c + 1)} />;
@@ -154,37 +110,13 @@ export function HomeScreen() {
     return <ScreenContainer>{null}</ScreenContainer>;
   }
 
-  const isCheckedIn = !!checkInExpiresAt;
-  const merged = mergeActivity(prHistory, runHistory);
+  const merged = mergeActivity(workouts, runHistory);
   const visibleActivity = filter === 'all' ? merged.slice(0, RECENT_LIMIT) : merged.filter((item) => item.kind === filter);
 
   return (
     <ScreenContainer>
       <ScrollView showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Home</Text>
-        <View style={styles.spacer} />
-        <Card>
-          {isCheckedIn ? (
-            <Text style={styles.checkInStatus}>
-              Checked in until{' '}
-              {new Date(checkInExpiresAt as string).toLocaleTimeString([], {
-                hour: 'numeric',
-                minute: '2-digit',
-              })}
-            </Text>
-          ) : (
-            <>
-              <Text style={styles.checkInStatus}>Not checked in</Text>
-              <View style={styles.spacerSmall} />
-              <Button
-                label={isCheckingIn ? 'Checking in…' : "I'm here now"}
-                onPress={handleCheckIn}
-                disabled={isCheckingIn || !homeLocation}
-              />
-            </>
-          )}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </Card>
         <View style={styles.spacer} />
         <Text style={styles.sectionTitle}>Recent activity</Text>
         <View style={styles.spacerSmall} />
@@ -205,6 +137,7 @@ export function HomeScreen() {
             <Card key={item.id} style={styles.activityCard}>
               <Text style={styles.activityLabel}>{item.label}</Text>
               <Text style={styles.activityDetail}>{item.detail}</Text>
+              <Text style={styles.activityTimestamp}>{item.timestamp}</Text>
             </Card>
           ))
         )}
@@ -230,11 +163,6 @@ const styles = StyleSheet.create({
   spacerSmall: {
     height: theme.spacing.sm,
   },
-  checkInStatus: {
-    fontSize: theme.typography.size.base,
-    fontWeight: theme.typography.weight.semibold,
-    color: theme.colors.text,
-  },
   activityCard: {
     marginBottom: theme.spacing.sm,
   },
@@ -248,13 +176,13 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginTop: theme.spacing.xs,
   },
+  activityTimestamp: {
+    fontSize: theme.typography.size.xs,
+    color: theme.colors.textMuted,
+    marginTop: theme.spacing.xs,
+  },
   emptyBody: {
     fontSize: theme.typography.size.base,
     color: theme.colors.textMuted,
-  },
-  error: {
-    color: theme.colors.danger,
-    fontSize: theme.typography.size.sm,
-    marginTop: theme.spacing.sm,
   },
 });
