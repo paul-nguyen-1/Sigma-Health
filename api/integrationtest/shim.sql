@@ -28,4 +28,13 @@ GRANT USAGE ON SCHEMA public TO authenticated, anon;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
 
+-- Real Supabase grants authenticated/anon direct EXECUTE on auth.uid() --
+-- it's the standard way to call it from custom SQL/functions, not just
+-- from inside RLS policy predicates (which don't hit this check the same
+-- way). No Phase 1/2 function ever called auth.uid() directly from its
+-- own body, so this gap in the shim went unexercised until Phase 3's
+-- SECURITY INVOKER RPCs (e.g. create_group) needed it.
+GRANT USAGE ON SCHEMA auth TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated, anon;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

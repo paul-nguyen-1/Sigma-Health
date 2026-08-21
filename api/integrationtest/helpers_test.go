@@ -87,3 +87,36 @@ func asUser(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, fn func(tx pgx.T
 
 	fn(tx)
 }
+
+// asUserCommit is asUser's persisting counterpart: it commits instead of
+// always rolling back. Phase 1/2's tests never needed this -- every RLS
+// check there was self-contained within one transaction (an insert/select
+// checked in the same asUser call it was made in). Phase 3 introduces
+// multi-step flows where one user's action (e.g. start_direct_conversation)
+// must durably exist for a LATER, separate asUser call -- possibly as a
+// different user -- to observe, so the setup step needs to actually commit.
+// Use asUser (not this) for any step whose effect only needs to be
+// observed within its own call.
+func asUserCommit(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, fn func(tx pgx.Tx)) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE authenticated"); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('request.jwt.claim.sub', $1, true)", userID.String()); err != nil {
+		t.Fatalf("set jwt sub: %v", err)
+	}
+
+	fn(tx)
+
+	if err := tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("commit: %v", err)
+	}
+}
