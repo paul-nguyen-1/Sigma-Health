@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
@@ -10,6 +11,7 @@ import { theme } from '../../theme';
 import { supabase } from '../../lib/supabase';
 import { formatPace, formatTimestamp } from '../../lib/format';
 import type { ProfileStackParamList } from '../../navigation/ProfileStack';
+import type { AppTabParamList } from '../../navigation/AppTabs';
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'OtherProfile'>;
 type ProfileInfo = { displayName: string; bio: string | null; avatarUrl: string | null };
@@ -22,6 +24,7 @@ type RunRow = { id: string; distanceKm: number; paceSecondsPerKm: number; create
 // back whatever the current user is actually allowed to see.
 export function OtherProfileScreen({ route, navigation }: Props) {
   const { userId } = route.params;
+  const tabNavigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileInfo | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -32,6 +35,9 @@ export function OtherProfileScreen({ route, navigation }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isTogglingFollow, setIsTogglingFollow] = useState(false);
+  const [isMessaging, setIsMessaging] = useState(false);
+  const [isBlocking, setIsBlocking] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
   useFocusEffect(
@@ -115,20 +121,59 @@ export function OtherProfileScreen({ route, navigation }: Props) {
   async function handleToggleFollow() {
     if (!currentUserId) return;
     setIsTogglingFollow(true);
+    setActionError(null);
     if (isFollowing) {
       const { error } = await supabase.from('follows').delete().eq('follower_id', currentUserId).eq('followed_id', userId);
-      if (!error) {
+      if (error) {
+        setActionError(error.message);
+      } else {
         setIsFollowing(false);
         setFollowerCount((c) => Math.max(0, c - 1));
       }
     } else {
       const { error } = await supabase.from('follows').insert({ follower_id: currentUserId, followed_id: userId });
-      if (!error) {
+      if (error) {
+        setActionError(error.message);
+      } else {
         setIsFollowing(true);
         setFollowerCount((c) => c + 1);
       }
     }
     setIsTogglingFollow(false);
+  }
+
+  async function handleMessage() {
+    setIsMessaging(true);
+    setActionError(null);
+    const { data: conversationId, error } = await supabase.rpc('start_direct_conversation', { other_user_id: userId });
+    setIsMessaging(false);
+    if (error) {
+      setActionError(error.message);
+      return;
+    }
+    tabNavigation.navigate('Community', { screen: 'Chat', params: { conversationId: conversationId as string } });
+  }
+
+  function handleBlock() {
+    if (!currentUserId) return;
+    Alert.alert('Block this user?', `They won't be able to message or follow you, and you won't see each other's activity.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Block',
+        style: 'destructive',
+        onPress: async () => {
+          setIsBlocking(true);
+          setActionError(null);
+          const { error } = await supabase.from('blocks').insert({ blocker_id: currentUserId, blocked_id: userId });
+          setIsBlocking(false);
+          if (error) {
+            setActionError(error.message);
+            return;
+          }
+          navigation.goBack();
+        },
+      },
+    ]);
   }
 
   if (loadError) {
@@ -171,12 +216,22 @@ export function OtherProfileScreen({ route, navigation }: Props) {
 
         {!isSelf ? (
           <>
-            <Button
-              label={isTogglingFollow ? '…' : isFollowing ? 'Unfollow' : 'Follow'}
-              variant={isFollowing ? 'secondary' : 'primary'}
-              onPress={handleToggleFollow}
-              disabled={isTogglingFollow}
-            />
+            <View style={styles.actionsRow}>
+              <View style={styles.actionButton}>
+                <Button
+                  label={isTogglingFollow ? '…' : isFollowing ? 'Unfollow' : 'Follow'}
+                  variant={isFollowing ? 'secondary' : 'primary'}
+                  onPress={handleToggleFollow}
+                  disabled={isTogglingFollow}
+                />
+              </View>
+              <View style={styles.actionButton}>
+                <Button label={isMessaging ? '…' : 'Message'} variant="secondary" onPress={handleMessage} disabled={isMessaging} />
+              </View>
+            </View>
+            <View style={styles.spacerSmall} />
+            <Button label={isBlocking ? '…' : 'Block'} variant="secondary" onPress={handleBlock} disabled={isBlocking} />
+            {actionError ? <Text style={styles.error}>{actionError}</Text> : null}
             <View style={styles.spacer} />
           </>
         ) : null}
@@ -258,6 +313,18 @@ const styles = StyleSheet.create({
   countLabel: {
     fontSize: theme.typography.size.sm,
     color: theme.colors.textMuted,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+  },
+  actionButton: {
+    flex: 1,
+  },
+  error: {
+    color: theme.colors.danger,
+    fontSize: theme.typography.size.sm,
+    marginTop: theme.spacing.sm,
   },
   sectionTitle: {
     fontSize: theme.typography.size.lg,

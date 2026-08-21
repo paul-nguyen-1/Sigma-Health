@@ -29,6 +29,7 @@ export function ConversationsInboxScreen({ navigation }: Props) {
   const [pendingMatches, setPendingMatches] = useState<PendingMatch[]>([]);
   const [isOpeningLocation, setIsOpeningLocation] = useState(false);
   const [respondingMatchId, setRespondingMatchId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -91,7 +92,8 @@ export function ConversationsInboxScreen({ navigation }: Props) {
 
         const { data: memberships, error: membershipsError } = await supabase
           .from('conversation_members')
-          .select('conversation_id, conversations(id, type, name, created_at)');
+          .select('conversation_id, conversations(id, type, name, created_at)')
+          .eq('user_id', user.id);
         if (cancelled) return;
         if (membershipsError) {
           setLoadError(membershipsError.message);
@@ -154,23 +156,31 @@ export function ConversationsInboxScreen({ navigation }: Props) {
   async function handleOpenLocation() {
     if (!homeLocation) return;
     setIsOpeningLocation(true);
+    setActionError(null);
     const { data: conversationId, error } = await supabase.rpc('get_or_create_location_conversation', {
       p_location_type: homeLocation.locationType,
       p_location_id: homeLocation.locationId,
     });
     setIsOpeningLocation(false);
-    if (!error && conversationId) {
-      navigation.navigate('Chat', { conversationId: conversationId as string });
+    if (error) {
+      setActionError(error.message);
+      return;
     }
+    navigation.navigate('Chat', { conversationId: conversationId as string });
   }
 
   async function handleRespondToMatch(matchGroupId: string, accept: boolean) {
     setRespondingMatchId(matchGroupId);
-    await supabase
+    setActionError(null);
+    const { error } = await supabase
       .from('match_participants')
       .update({ status: accept ? 'accepted' : 'declined' })
       .eq('match_group_id', matchGroupId);
     setRespondingMatchId(null);
+    if (error) {
+      setActionError(error.message);
+      return;
+    }
     setRetryCount((c) => c + 1);
   }
 
@@ -185,6 +195,7 @@ export function ConversationsInboxScreen({ navigation }: Props) {
     <ScreenContainer>
       <ScrollView showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Community</Text>
+        {actionError ? <Text style={styles.error}>{actionError}</Text> : null}
         <View style={styles.spacer} />
 
         {homeLocation ? (
@@ -293,6 +304,11 @@ const styles = StyleSheet.create({
   emptyBody: {
     fontSize: theme.typography.size.base,
     color: theme.colors.textMuted,
+  },
+  error: {
+    color: theme.colors.danger,
+    fontSize: theme.typography.size.sm,
+    marginTop: theme.spacing.sm,
   },
   rowCard: {
     marginBottom: theme.spacing.sm,

@@ -114,6 +114,8 @@ export function ProfileScreen({ navigation }: Props) {
         if (workoutsRes.error) throw new Error(workoutsRes.error.message);
         if (runRes.error) throw new Error(runRes.error.message);
         if (prRes.error) throw new Error(prRes.error.message);
+        if (followerCountRes.error) throw new Error(followerCountRes.error.message);
+        if (followingCountRes.error) throw new Error(followingCountRes.error.message);
         if (cancelled) return;
 
         setFollowerCount(followerCountRes.count ?? 0);

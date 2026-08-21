@@ -71,7 +71,18 @@ export function useConversationMessages(conversationId: string): MessagesState {
           body: row.body,
           createdAt: row.created_at,
         }));
-        setMessages(rows);
+        // Merge with (not replace) whatever the Realtime subscription --
+        // already open below, in parallel with this fetch -- may have
+        // already appended. A plain setMessages(rows) here could
+        // silently drop a message that arrived over the socket before
+        // this REST snapshot resolved.
+        setMessages((prev) => {
+          const merged = [...rows];
+          for (const p of prev) {
+            if (!merged.some((m) => m.id === p.id)) merged.push(p);
+          }
+          return merged.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        });
         setIsLoading(false);
 
         const senderIds = [...new Set(rows.map((m) => m.senderId))];

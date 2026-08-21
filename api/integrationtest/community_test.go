@@ -284,6 +284,54 @@ func TestMessagesDirectBlockedAfterExistingConversation(t *testing.T) {
 	})
 }
 
+// TestMessagesNonMemberCannotRead is the core negative case for the most
+// sensitive table in this phase -- a random third party (not a member of
+// the conversation, no shared check-in) must not be able to read message
+// bodies from a direct or group conversation. Found missing during the
+// full-phase code review.
+func TestMessagesNonMemberCannotRead(t *testing.T) {
+	pool := testPool(t)
+	alice := createUser(t, pool, "Alice")
+	bob := createUser(t, pool, "Bob")
+	carol := createUser(t, pool, "Carol")
+
+	var conversationID string
+	asUserCommit(t, pool, alice, func(tx pgx.Tx) {
+		if err := tx.QueryRow(context.Background(), "SELECT start_direct_conversation($1)", bob).Scan(&conversationID); err != nil {
+			t.Fatalf("alice starting a DM with bob should succeed: %v", err)
+		}
+	})
+	asUserCommit(t, pool, alice, func(tx pgx.Tx) {
+		_, err := tx.Exec(context.Background(),
+			"INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, $2, 'private')", conversationID, alice,
+		)
+		if err != nil {
+			t.Fatalf("alice messaging in her own DM should succeed: %v", err)
+		}
+	})
+
+	asUser(t, pool, carol, func(tx pgx.Tx) {
+		var count int
+		if err := tx.QueryRow(context.Background(),
+			"SELECT count(*) FROM messages WHERE conversation_id = $1", conversationID,
+		).Scan(&count); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("carol (not a member) should NOT see messages in alice/bob's DM, saw %d rows", count)
+		}
+	})
+
+	asUser(t, pool, carol, func(tx pgx.Tx) {
+		_, err := tx.Exec(context.Background(),
+			"INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, $2, 'intruding')", conversationID, carol,
+		)
+		if err == nil {
+			t.Error("carol (not a member) should NOT be able to post into alice/bob's DM, but the insert succeeded")
+		}
+	})
+}
+
 // TestMatchGroupsNoDirectWrite confirms match_groups is readable-not-
 // writable, same shape as user_plan_sessions -- only propose_match/the
 // provisioning trigger ever write to it.
@@ -304,7 +352,7 @@ func TestMatchGroupsNoDirectWrite(t *testing.T) {
 
 	asUser(t, pool, alice, func(tx pgx.Tx) {
 		_, err := tx.Exec(context.Background(),
-			"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, 'sub_5_00')", runningSportID, parkID,
+			"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, '4_30_5_00')", runningSportID, parkID,
 		)
 		if err == nil {
 			t.Error("a direct client insert into match_groups should be blocked (no write policy), but it succeeded")
@@ -326,7 +374,7 @@ func TestMatchParticipantsInvitedSelfOnlyRespond(t *testing.T) {
 	pool.QueryRow(ctx, "SELECT id FROM sports WHERE slug = 'running'").Scan(&runningSportID)
 	pool.QueryRow(ctx, "INSERT INTO parks (sport_id, name, lat, lng) VALUES ($1, 'Test Park', 0, 0) RETURNING id", runningSportID).Scan(&parkID)
 	if err := pool.QueryRow(ctx,
-		"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, 'sub_5_00') RETURNING id", runningSportID, parkID,
+		"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, '4_30_5_00') RETURNING id", runningSportID, parkID,
 	).Scan(&groupID); err != nil {
 		t.Fatalf("fixture insert: %v", err)
 	}
@@ -386,7 +434,7 @@ func TestMatchParticipantsProvisionsConversationAtThreshold(t *testing.T) {
 	pool.QueryRow(ctx, "SELECT id FROM sports WHERE slug = 'running'").Scan(&runningSportID)
 	pool.QueryRow(ctx, "INSERT INTO parks (sport_id, name, lat, lng) VALUES ($1, 'Test Park', 0, 0) RETURNING id", runningSportID).Scan(&parkID)
 	pool.QueryRow(ctx,
-		"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, 'sub_5_00') RETURNING id", runningSportID, parkID,
+		"INSERT INTO match_groups (sport_id, park_id, pace_bucket) VALUES ($1, $2, '4_30_5_00') RETURNING id", runningSportID, parkID,
 	).Scan(&groupID)
 
 	if _, err := pool.Exec(ctx,
