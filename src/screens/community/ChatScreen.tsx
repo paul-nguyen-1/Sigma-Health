@@ -14,7 +14,7 @@ import { formatTimestamp } from '../../lib/format';
 import type { CommunityStackParamList } from '../../navigation/CommunityStack';
 
 type Props = NativeStackScreenProps<CommunityStackParamList, 'Chat'>;
-type HeaderInfo = { title: string; inviteCode: string | null };
+type HeaderInfo = { title: string; inviteCode: string | null; hereCount: number | null };
 
 // First FlatList in this codebase (every other list so far is a .map()
 // inside a ScrollView, fine at the bounded sizes those screens deal
@@ -46,7 +46,7 @@ export function ChatScreen({ route, navigation }: Props) {
 
         const { data: conversation, error: convError } = await supabase
           .from('conversations')
-          .select('type, name, invite_code')
+          .select('type, name, invite_code, location_type, location_id')
           .eq('id', conversationId)
           .single();
         if (cancelled) return;
@@ -56,7 +56,23 @@ export function ChatScreen({ route, navigation }: Props) {
         }
 
         if (conversation.type === 'group') {
-          setHeader({ title: conversation.name ?? 'Group', inviteCode: conversation.invite_code });
+          setHeader({ title: conversation.name ?? 'Group', inviteCode: conversation.invite_code, hereCount: null });
+          return;
+        }
+
+        if (conversation.type === 'location' && conversation.location_type && conversation.location_id) {
+          const table = conversation.location_type === 'gym' ? 'gyms' : 'parks';
+          const [{ data: location }, { count }] = await Promise.all([
+            supabase.from(table).select('name').eq('id', conversation.location_id).maybeSingle(),
+            supabase
+              .from('check_ins')
+              .select('id', { count: 'exact', head: true })
+              .eq('location_type', conversation.location_type)
+              .eq('location_id', conversation.location_id)
+              .gt('expires_at', new Date().toISOString()),
+          ]);
+          if (cancelled) return;
+          setHeader({ title: location?.name ?? 'Location', inviteCode: null, hereCount: count ?? 0 });
           return;
         }
 
@@ -75,9 +91,9 @@ export function ChatScreen({ route, navigation }: Props) {
             .eq('id', other.user_id)
             .single();
           if (cancelled) return;
-          setHeader({ title: profile?.display_name ?? 'Direct message', inviteCode: null });
+          setHeader({ title: profile?.display_name ?? 'Direct message', inviteCode: null, hereCount: null });
         } else {
-          setHeader({ title: 'Direct message', inviteCode: null });
+          setHeader({ title: 'Direct message', inviteCode: null, hereCount: null });
         }
       }
       loadHeader();
@@ -115,6 +131,11 @@ export function ChatScreen({ route, navigation }: Props) {
       </View>
       <Text style={styles.title}>{header?.title ?? '…'}</Text>
       {header?.inviteCode ? <Text style={styles.inviteCode}>Invite code: {header.inviteCode}</Text> : null}
+      {header?.hereCount !== null && header?.hereCount !== undefined ? (
+        <Text style={styles.inviteCode}>
+          {header.hereCount} {header.hereCount === 1 ? 'person' : 'people'} here now
+        </Text>
+      ) : null}
       <View style={styles.spacer} />
 
       <FlatList

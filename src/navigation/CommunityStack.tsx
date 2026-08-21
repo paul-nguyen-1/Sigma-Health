@@ -4,14 +4,14 @@ import { ConversationsInboxScreen } from '../screens/community/ConversationsInbo
 import { ChatScreen } from '../screens/community/ChatScreen';
 import { CreateGroupScreen } from '../screens/community/CreateGroupScreen';
 import { JoinGroupScreen } from '../screens/community/JoinGroupScreen';
+import { ProposeMatchScreen } from '../screens/community/ProposeMatchScreen';
 
-// direct/group only for now -- location channels and matching (Weeks
-// 3/4 per .claude.roadmap.phase3.md §7) aren't wired into the UI yet.
 export type CommunityStackParamList = {
   ConversationsInbox: undefined;
   Chat: { conversationId: string };
   CreateGroup: undefined;
   JoinGroup: undefined;
+  ProposeMatch: undefined;
 };
 
 const Stack = createNativeStackNavigator<CommunityStackParamList>();
@@ -23,6 +23,7 @@ export function CommunityStack() {
       <Stack.Screen name="Chat" component={ChatScreen} />
       <Stack.Screen name="CreateGroup" component={CreateGroupScreen} />
       <Stack.Screen name="JoinGroup" component={JoinGroupScreen} />
+      <Stack.Screen name="ProposeMatch" component={ProposeMatchScreen} />
     </Stack.Navigator>
   );
 }

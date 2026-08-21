@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,14 +13,16 @@ import { SegmentedControl } from '../components/SegmentedControl';
 import { ShareCard } from '../components/ShareCard';
 import { theme } from '../theme';
 import { supabase } from '../lib/supabase';
-import { mergeActivity } from '../lib/activity';
+import { mergeActivity, mergeFollowedActivity } from '../lib/activity';
+import type { FeedItem } from '../lib/activity';
 import { calculateStreak, STREAK_MILESTONES } from '../lib/streak';
 import { useUserSports } from '../lib/useUserSports';
 import { isLiftTarget, summarizeWorkout } from '../types/models';
-import type { PlanSessionTarget, Run, Workout } from '../types/models';
+import type { PersonalRecord, PlanSessionTarget, Run, Workout } from '../types/models';
 import type { AppTabParamList } from '../navigation/AppTabs';
 
 const RECENT_LIMIT = 3;
+const FEED_LIMIT = 5;
 const STREAK_LOOKBACK_DAYS = 60;
 const MILESTONE_STORAGE_KEY = 'streakMilestoneShown';
 
@@ -54,6 +56,7 @@ export function HomeScreen() {
   const [isSharing, setIsSharing] = useState(false);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runHistory, setRunHistory] = useState<Run[]>([]);
+  const [followedFeed, setFollowedFeed] = useState<FeedItem[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -78,40 +81,94 @@ export function HomeScreen() {
           const streakCutoff = new Date(Date.now() - STREAK_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
           const dailySessionSportIds = [liftingSportId, runningSportId].filter((id): id is string => !!id);
 
-          const [workoutsRes, runsRes, planRes, checkInsRes, completedSessionsRes, dailySessionsRes] = await Promise.all([
-            supabase
-              .from('workouts')
-              .select('id, user_id, gym_id, title, exercises, started_at, updated_at')
-              .eq('user_id', user.id)
-              .order('started_at', { ascending: false })
-              .limit(RECENT_LIMIT),
-            supabase
-              .from('runs')
-              .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false })
-              .limit(RECENT_LIMIT),
-            supabase
-              .from('user_plans')
-              .select('id')
-              .eq('status', 'active')
-              .order('started_at', { ascending: false })
-              .limit(1)
-              .maybeSingle(),
-            supabase.from('check_ins').select('checked_in_at').eq('user_id', user.id).gte('checked_in_at', streakCutoff),
-            supabase.from('user_plan_sessions').select('completed_at').not('completed_at', 'is', null).gte('completed_at', streakCutoff),
-            dailySessionSportIds.length > 0
-              ? supabase.from('daily_sessions').select('id, title, target').eq('date', today).in('sport_id', dailySessionSportIds)
-              : Promise.resolve({ data: [], error: null }),
-          ]);
+          const [workoutsRes, runsRes, planRes, checkInsRes, completedSessionsRes, dailySessionsRes, followedPrsRes, followedRunsRes] =
+            await Promise.all([
+              supabase
+                .from('workouts')
+                .select('id, user_id, gym_id, title, exercises, started_at, updated_at')
+                .eq('user_id', user.id)
+                .order('started_at', { ascending: false })
+                .limit(RECENT_LIMIT),
+              supabase
+                .from('runs')
+                .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(RECENT_LIMIT),
+              supabase
+                .from('user_plans')
+                .select('id')
+                .eq('status', 'active')
+                .order('started_at', { ascending: false })
+                .limit(1)
+                .maybeSingle(),
+              supabase.from('check_ins').select('checked_in_at').eq('user_id', user.id).gte('checked_in_at', streakCutoff),
+              supabase.from('user_plan_sessions').select('completed_at').not('completed_at', 'is', null).gte('completed_at', streakCutoff),
+              dailySessionSportIds.length > 0
+                ? supabase.from('daily_sessions').select('id, title, target').eq('date', today).in('sport_id', dailySessionSportIds)
+                : Promise.resolve({ data: [], error: null }),
+              // RLS (migration 0024) already restricts these to followed
+              // users -- self excluded via .neq, no separate "who do I
+              // follow" round-trip needed. Reverse-chronological, LIMIT-
+              // bounded, no ranking -- see .claude.roadmap.phase3.md §4.
+              supabase
+                .from('personal_records')
+                .select('id, user_id, exercise_name, best_weight, best_reps, best_1rm, workout_id, achieved_at')
+                .neq('user_id', user.id)
+                .order('achieved_at', { ascending: false })
+                .limit(FEED_LIMIT),
+              supabase
+                .from('runs')
+                .select('id, user_id, park_id, distance_km, duration_seconds, pace_seconds_per_km, created_at')
+                .neq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(FEED_LIMIT),
+            ]);
           if (cancelled) return;
 
           const firstError =
-            workoutsRes.error ?? runsRes.error ?? planRes.error ?? checkInsRes.error ?? completedSessionsRes.error ?? dailySessionsRes.error;
+            workoutsRes.error ??
+            runsRes.error ??
+            planRes.error ??
+            checkInsRes.error ??
+            completedSessionsRes.error ??
+            dailySessionsRes.error ??
+            followedPrsRes.error ??
+            followedRunsRes.error;
           if (firstError) {
             setLoadError(firstError.message);
             setIsLoading(false);
             return;
+          }
+
+          const followedPersonalRecords: PersonalRecord[] = (followedPrsRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            exerciseName: row.exercise_name,
+            bestWeight: row.best_weight,
+            bestReps: row.best_reps,
+            best1RM: row.best_1rm,
+            workoutId: row.workout_id,
+            achievedAt: row.achieved_at,
+          }));
+          const followedRuns: Run[] = (followedRunsRes.data ?? []).map((row) => ({
+            id: row.id,
+            userId: row.user_id,
+            parkId: row.park_id,
+            distanceKm: row.distance_km,
+            durationSeconds: row.duration_seconds,
+            paceSecondsPerKm: row.pace_seconds_per_km,
+            createdAt: row.created_at,
+          }));
+          const feedUserIds = [...new Set([...followedPersonalRecords.map((pr) => pr.userId), ...followedRuns.map((r) => r.userId)])];
+          if (feedUserIds.length > 0) {
+            const { data: feedProfiles } = await supabase.from('profiles_public').select('id, display_name').in('id', feedUserIds);
+            if (cancelled) return;
+            const namesByUserId: Record<string, string> = {};
+            for (const p of feedProfiles ?? []) namesByUserId[p.id] = p.display_name;
+            setFollowedFeed(mergeFollowedActivity(followedPersonalRecords, followedRuns, namesByUserId));
+          } else {
+            setFollowedFeed([]);
           }
 
           const streakDates = [
@@ -331,6 +388,27 @@ export function HomeScreen() {
         ))}
         <View style={styles.spacer} />
 
+        {followedFeed.length > 0 ? (
+          <>
+            <Text style={styles.sectionTitle}>Following</Text>
+            <View style={styles.spacerSmall} />
+            {followedFeed.map((item) => (
+              <Pressable
+                key={item.id}
+                onPress={() => navigation.navigate('Profile', { screen: 'OtherProfile', params: { userId: item.userId } })}
+              >
+                <Card style={styles.activityCard}>
+                  <Text style={styles.feedUserName}>{item.userName}</Text>
+                  <Text style={styles.activityLabel}>{item.label}</Text>
+                  <Text style={styles.activityDetail}>{item.detail}</Text>
+                  <Text style={styles.activityTimestamp}>{item.timestamp}</Text>
+                </Card>
+              </Pressable>
+            ))}
+            <View style={styles.spacer} />
+          </>
+        ) : null}
+
         <Text style={styles.sectionTitle}>Recent activity</Text>
         <View style={styles.spacerSmall} />
         <SegmentedControl
@@ -415,6 +493,11 @@ const styles = StyleSheet.create({
   },
   activityCard: {
     marginBottom: theme.spacing.sm,
+  },
+  feedUserName: {
+    fontSize: theme.typography.size.xs,
+    fontWeight: theme.typography.weight.semibold,
+    color: theme.colors.primary,
   },
   activityLabel: {
     fontSize: theme.typography.size.base,

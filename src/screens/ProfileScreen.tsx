@@ -25,7 +25,7 @@ export function ProfileScreen({ navigation }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [homeLocationName, setHomeLocationName] = useState<string | null>(null);
+  const [lastCheckInLocation, setLastCheckInLocation] = useState<string | null>(null);
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
@@ -56,7 +56,7 @@ export function ProfileScreen({ navigation }: Props) {
 
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('display_name, bio, avatar_url, home_gym_id, home_park_id, referral_code')
+          .select('display_name, bio, avatar_url, referral_code')
           .eq('id', user.id)
           .maybeSingle();
         if (profileError) throw new Error(profileError.message);
@@ -66,24 +66,28 @@ export function ProfileScreen({ navigation }: Props) {
           setBio(profile.bio);
           setAvatarUrl(profile.avatar_url);
           setReferralCode(profile.referral_code);
+        }
 
-          if (profile.home_gym_id) {
-            const { data: gym, error: gymError } = await supabase
-              .from('gyms')
-              .select('name')
-              .eq('id', profile.home_gym_id)
-              .maybeSingle();
-            if (gymError) throw new Error(gymError.message);
-            setHomeLocationName(gym?.name ?? null);
-          } else if (profile.home_park_id) {
-            const { data: park, error: parkError } = await supabase
-              .from('parks')
-              .select('name')
-              .eq('id', profile.home_park_id)
-              .maybeSingle();
-            if (parkError) throw new Error(parkError.message);
-            setHomeLocationName(park?.name ?? null);
-          }
+        const { data: recentCheckIn, error: checkInError } = await supabase
+          .from('check_ins')
+          .select('location_type, location_id')
+          .eq('user_id', user.id)
+          .order('checked_in_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (checkInError) throw new Error(checkInError.message);
+
+        if (recentCheckIn) {
+          const table = recentCheckIn.location_type === 'gym' ? 'gyms' : 'parks';
+          const { data: location, error: locationError } = await supabase
+            .from(table)
+            .select('name')
+            .eq('id', recentCheckIn.location_id)
+            .maybeSingle();
+          if (locationError) throw new Error(locationError.message);
+          setLastCheckInLocation(location?.name ?? null);
+        } else {
+          setLastCheckInLocation(null);
         }
 
         const [workoutsRes, runRes, prRes, followerCountRes, followingCountRes] = await Promise.all([
@@ -187,7 +191,7 @@ export function ProfileScreen({ navigation }: Props) {
         <View style={styles.spacerSmall} />
         <Text style={styles.title}>{displayName}</Text>
         {bio ? <Text style={styles.bio}>{bio}</Text> : null}
-        {homeLocationName ? <Text style={styles.homeLocation}>{homeLocationName}</Text> : null}
+        {lastCheckInLocation ? <Text style={styles.lastCheckIn}>Last checked in: {lastCheckInLocation}</Text> : null}
         <View style={styles.spacerSmall} />
 
         <View style={styles.countsRow}>
@@ -306,8 +310,8 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginTop: theme.spacing.xs,
   },
-  homeLocation: {
-    fontSize: theme.typography.size.sm,
+  lastCheckIn: {
+    fontSize: theme.typography.size.xs,
     color: theme.colors.textMuted,
     marginTop: theme.spacing.xs,
   },
