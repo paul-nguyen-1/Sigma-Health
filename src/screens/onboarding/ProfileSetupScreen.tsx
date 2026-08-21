@@ -16,6 +16,8 @@ export function ProfileSetupScreen({ navigation }: Props) {
   const [bio, setBio] = useState('');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [referralCodeInput, setReferralCodeInput] = useState('');
+  const [referralError, setReferralError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
 
   async function handleContinue() {
     setError(null);
+    setReferralError(null);
     setIsSubmitting(true);
 
     const {
@@ -65,6 +68,20 @@ export function ProfileSetupScreen({ navigation }: Props) {
     if (!user) {
       setIsSubmitting(false);
       return;
+    }
+
+    // Optional and non-blocking -- an invalid code shouldn't stop
+    // onboarding, it's a growth-attribution nicety, not a required step.
+    let referredBy: string | null = null;
+    if (referralCodeInput.trim()) {
+      const { data: resolvedId } = await supabase.rpc('resolve_referral_code', {
+        p_code: referralCodeInput.trim().toUpperCase(),
+      });
+      if (resolvedId && resolvedId !== user.id) {
+        referredBy = resolvedId as string;
+      } else {
+        setReferralError('Code not found -- continuing without it.');
+      }
     }
 
     let uploadedAvatarUrl = avatarUrl;
@@ -89,6 +106,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
       display_name: displayName.trim(),
       bio: bio.trim() || null,
       avatar_url: uploadedAvatarUrl,
+      ...(referredBy ? { referred_by: referredBy } : {}),
     });
     if (upsertError) {
       setError(upsertError.message);
@@ -128,6 +146,14 @@ export function ProfileSetupScreen({ navigation }: Props) {
         multiline
         style={styles.bioInput}
       />
+      <TextField
+        label="Referral code (optional)"
+        value={referralCodeInput}
+        onChangeText={setReferralCodeInput}
+        autoCapitalize="characters"
+        placeholder="Got invited? Enter their code"
+      />
+      {referralError ? <Text style={styles.referralWarning}>{referralError}</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.spacer} />
       <Button
@@ -178,6 +204,11 @@ const styles = StyleSheet.create({
   },
   error: {
     color: theme.colors.danger,
+    fontSize: theme.typography.size.sm,
+    marginBottom: theme.spacing.sm,
+  },
+  referralWarning: {
+    color: theme.colors.textMuted,
     fontSize: theme.typography.size.sm,
     marginBottom: theme.spacing.sm,
   },

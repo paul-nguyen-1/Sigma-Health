@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -13,15 +14,21 @@ import { mergeActivity } from '../lib/activity';
 import { summarizeWorkout } from '../types/models';
 import { useAuth } from '../navigation/auth-context';
 import type { PersonalRecord, Run, Workout } from '../types/models';
+import type { ProfileStackParamList } from '../navigation/ProfileStack';
 
 type Filter = 'all' | 'lift' | 'run';
+type Props = NativeStackScreenProps<ProfileStackParamList, 'MyProfile'>;
 
-export function ProfileScreen() {
+export function ProfileScreen({ navigation }: Props) {
   const { signOut } = useAuth();
+  const [userId, setUserId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [homeLocationName, setHomeLocationName] = useState<string | null>(null);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [runHistory, setRunHistory] = useState<Run[]>([]);
   const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
@@ -45,9 +52,11 @@ export function ProfileScreen() {
           return;
         }
 
+        setUserId(user.id);
+
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('display_name, bio, avatar_url, home_gym_id, home_park_id')
+          .select('display_name, bio, avatar_url, home_gym_id, home_park_id, referral_code')
           .eq('id', user.id)
           .maybeSingle();
         if (profileError) throw new Error(profileError.message);
@@ -56,6 +65,7 @@ export function ProfileScreen() {
           setDisplayName(profile.display_name);
           setBio(profile.bio);
           setAvatarUrl(profile.avatar_url);
+          setReferralCode(profile.referral_code);
 
           if (profile.home_gym_id) {
             const { data: gym, error: gymError } = await supabase
@@ -76,7 +86,7 @@ export function ProfileScreen() {
           }
         }
 
-        const [workoutsRes, runRes, prRes] = await Promise.all([
+        const [workoutsRes, runRes, prRes, followerCountRes, followingCountRes] = await Promise.all([
           supabase
             .from('workouts')
             .select('id, user_id, gym_id, title, exercises, started_at, updated_at')
@@ -94,11 +104,16 @@ export function ProfileScreen() {
             .select('id, user_id, exercise_name, best_weight, best_reps, best_1rm, workout_id, achieved_at')
             .eq('user_id', user.id)
             .order('best_1rm', { ascending: false }),
+          supabase.from('follows').select('follower_id', { count: 'exact', head: true }).eq('followed_id', user.id),
+          supabase.from('follows').select('followed_id', { count: 'exact', head: true }).eq('follower_id', user.id),
         ]);
         if (workoutsRes.error) throw new Error(workoutsRes.error.message);
         if (runRes.error) throw new Error(runRes.error.message);
         if (prRes.error) throw new Error(prRes.error.message);
         if (cancelled) return;
+
+        setFollowerCount(followerCountRes.count ?? 0);
+        setFollowingCount(followingCountRes.count ?? 0);
 
         setWorkouts(
           (workoutsRes.data ?? []).map((row) => ({
@@ -173,6 +188,35 @@ export function ProfileScreen() {
         <Text style={styles.title}>{displayName}</Text>
         {bio ? <Text style={styles.bio}>{bio}</Text> : null}
         {homeLocationName ? <Text style={styles.homeLocation}>{homeLocationName}</Text> : null}
+        <View style={styles.spacerSmall} />
+
+        <View style={styles.countsRow}>
+          <Pressable
+            onPress={() => userId && navigation.navigate('FollowList', { userId, mode: 'followers', title: 'Followers' })}
+          >
+            <Text style={styles.countLabel}>{followerCount} followers</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => userId && navigation.navigate('FollowList', { userId, mode: 'following', title: 'Following' })}
+          >
+            <Text style={styles.countLabel}>{followingCount} following</Text>
+          </Pressable>
+        </View>
+        <View style={styles.spacerSmall} />
+
+        {referralCode ? (
+          <Pressable
+            onPress={() =>
+              Share.share({ message: `Join me on Sigma Health! Use my invite code ${referralCode} when you sign up.` })
+            }
+          >
+            <Card style={styles.referralCard}>
+              <Text style={styles.referralLabel}>Your referral code</Text>
+              <Text style={styles.referralCode}>{referralCode}</Text>
+              <Text style={styles.referralHint}>Tap to share</Text>
+            </Card>
+          </Pressable>
+        ) : null}
         <View style={styles.spacer} />
 
         {personalRecords.length > 0 ? (
@@ -265,6 +309,33 @@ const styles = StyleSheet.create({
   homeLocation: {
     fontSize: theme.typography.size.sm,
     color: theme.colors.textMuted,
+    marginTop: theme.spacing.xs,
+  },
+  countsRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.lg,
+  },
+  countLabel: {
+    fontSize: theme.typography.size.sm,
+    color: theme.colors.textMuted,
+  },
+  referralCard: {
+    alignItems: 'center',
+  },
+  referralLabel: {
+    fontSize: theme.typography.size.xs,
+    color: theme.colors.textMuted,
+  },
+  referralCode: {
+    fontSize: theme.typography.size.xl,
+    fontWeight: theme.typography.weight.bold,
+    color: theme.colors.text,
+    letterSpacing: 2,
+    marginTop: theme.spacing.xs,
+  },
+  referralHint: {
+    fontSize: theme.typography.size.xs,
+    color: theme.colors.primary,
     marginTop: theme.spacing.xs,
   },
   sectionTitle: {

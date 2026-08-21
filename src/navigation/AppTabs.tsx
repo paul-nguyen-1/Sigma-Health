@@ -7,7 +7,8 @@ import { LogStack } from './LogStack';
 import type { LogStackParamList } from './LogStack';
 import { CommunityStack } from './CommunityStack';
 import type { CommunityStackParamList } from './CommunityStack';
-import { ProfileScreen } from '../screens/ProfileScreen';
+import { ProfileStack } from './ProfileStack';
+import type { ProfileStackParamList } from './ProfileStack';
 import { theme } from '../theme';
 import { registerForPushNotifications } from '../lib/pushNotifications';
 
@@ -15,7 +16,7 @@ export type AppTabParamList = {
   Home: undefined;
   Log: NavigatorScreenParams<LogStackParamList> | undefined;
   Community: NavigatorScreenParams<CommunityStackParamList> | undefined;
-  Profile: undefined;
+  Profile: NavigatorScreenParams<ProfileStackParamList> | undefined;
 };
 
 const Tab = createBottomTabNavigator<AppTabParamList>();
@@ -50,7 +51,7 @@ export function AppTabs() {
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Log" component={LogStack} />
       <Tab.Screen name="Community" component={CommunityStack} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Profile" component={ProfileStack} />
     </Tab.Navigator>
   );
 }
