@@ -258,7 +258,13 @@ export function HomeScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <Text style={styles.title}>Home</Text>
-          {streak > 0 ? <Text style={styles.streakBadge}>🔥 {streak}</Text> : null}
+          {streak > 0 ? (
+            <View style={styles.streakBadge}>
+              <Text style={styles.streakBadgeText}>
+                {streak} day{streak === 1 ? '' : 's'} streak
+              </Text>
+            </View>
+          ) : null}
         </View>
         <View style={styles.spacer} />
 
@@ -365,9 +371,15 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
   },
   streakBadge: {
-    fontSize: theme.typography.size.lg,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 999,
+    paddingHorizontal: theme.spacing.sm + 2,
+    paddingVertical: theme.spacing.xs,
+  },
+  streakBadgeText: {
+    color: theme.colors.primaryText,
+    fontSize: theme.typography.size.sm,
     fontWeight: theme.typography.weight.semibold,
-    color: theme.colors.text,
   },
   sectionTitle: {
     fontSize: theme.typography.size.lg,

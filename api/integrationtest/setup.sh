@@ -2,8 +2,9 @@
 # Spins up a throwaway local Postgres (never a real Supabase project),
 # applies the auth-schema shim + every migration except the Supabase-only
 # 0009 (needs the real Storage extension), 0019 (needs pg_cron/pg_net),
-# and 0026 (also needs pg_net), and prints the env var to export before
-# running: go test ./integrationtest/...
+# 0026 (also needs pg_net), and 0027 (needs the real supabase_realtime
+# publication), and prints the env var to export before running:
+# go test ./integrationtest/...
 set -euo pipefail
 
 CONTAINER_NAME="sigma-health-rls-test"
@@ -34,6 +35,7 @@ cp "$API_DIR"/migrations/*.sql "$TMP_DIR/migrations/"
 rm -f "$TMP_DIR/migrations/0009_avatars_storage.sql"
 rm -f "$TMP_DIR/migrations/0019_streak_nudges.sql"
 rm -f "$TMP_DIR/migrations/0026_social_push.sql"
+rm -f "$TMP_DIR/migrations/0027_enable_realtime.sql"
 # goose resolves its migrations dir relative to the process's cwd at
 # runtime, but `go run` needs to be invoked from inside the module -- so
 # build the binary first (module context), then run it from TMP_DIR

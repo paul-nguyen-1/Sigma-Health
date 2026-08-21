@@ -110,3 +110,30 @@ export type PlanSessionTarget = PlanSessionLiftTarget | PlanSessionRunTarget;
 export function isLiftTarget(target: PlanSessionTarget): target is PlanSessionLiftTarget {
   return 'exercises' in target;
 }
+
+// Safe-columns view over profiles (migration 0020) -- the read path for
+// "who is this other user" everywhere in Community, since profiles itself
+// stays self-only.
+export interface PublicProfile {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface Conversation {
+  id: string;
+  type: 'direct' | 'group' | 'location';
+  name: string | null;
+  locationType: 'gym' | 'park' | null;
+  locationId: string | null;
+  inviteCode: string;
+  createdAt: string;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+}
